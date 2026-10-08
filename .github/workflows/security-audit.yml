@@ -68,13 +68,9 @@ jobs:
         echo "test data" > test_input.txt
         
         # Run with strace and filter network calls
-        NETWORK_CALLS=$(timeout 10 strace -e trace=network,socket,connect,bind,listen,accept,sendto,recvfrom,sendmsg,recvmsg \
-          ./minicrypto lock test_input.txt -o test_output.mcc 2>&1 <<EOF || true
-test_password
-test_password
-n
-EOF
-)
+        NETWORK_CALLS=$(printf 'test_password\ntest_password\nn\n' | \
+          timeout 10 strace -e trace=network,socket,connect,bind,listen,accept,sendto,recvfrom,sendmsg,recvmsg \
+          ./minicrypto lock test_input.txt -o test_output.mcc 2>&1 || true)
         
         # Check if any network calls were made
         if echo "$NETWORK_CALLS" | grep -qE 'socket|connect|bind|listen|accept|send|recv'; then
