@@ -1,0 +1,109 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[WARNING]  DETERMINISTIC ENCRYPTION MODE WARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+YOU ARE ABOUT TO USE DETERMINISTIC ENCRYPTION.
+
+This is NOT the default mode. The default mode is MUCH MORE SECURE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT THIS MEANS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Encrypting the SAME file with the SAME password will produce IDENTICAL 
+encrypted output every time.
+
+Example:
+  $ minicrypto lock secret.txt --deterministic
+  → secret.txt.mcc (hash: abc123...)
+  
+  $ minicrypto lock secret.txt --deterministic
+  → secret.txt.mcc (hash: abc123... SAME!)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECURITY RISKS YOU ACCEPT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. ANYONE CAN DETECT DUPLICATE FILES
+   
+   Attacker sees:
+     file1.mcc (hash: abc123)
+     file2.mcc (hash: abc123)
+   
+   Attacker knows:
+     "These are the SAME file encrypted with the SAME password"
+
+2. KNOWN-PLAINTEXT ATTACKS BECOME EASIER
+   
+   Attacker thinks:
+     "This encrypted file is either document1.txt or document2.txt"
+   
+   Attacker does:
+     - Encrypt document1.txt with password "password123"
+     - Compare hash with target file
+     - If match: password found + plaintext identified!
+
+3. YOU LOSE IND-CPA SECURITY
+   
+   Standard definition of secure encryption is BROKEN.
+   An attacker CAN distinguish which of two files was encrypted.
+
+4. FREQUENCY ANALYSIS IS POSSIBLE
+   
+   If you encrypt the same file 100 times (e.g., backups):
+     - Attacker sees: abc123 appears 100 times
+     - Attacker knows: "This file was accessed 100 times"
+     - Metadata leakage!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHEN TO USE (VERY RARE CASES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[v] Backup deduplication systems
+  (Same file encrypted multiple times = store only once)
+
+[v] Searchable encryption databases
+  (Need to find encrypted records by hash)
+
+[v] Content-addressed storage
+  (File content determines storage location)
+
+[x] NEVER use for:
+  - Personal files
+  - Sensitive documents
+  - Anything that could be guessed by an attacker
+  - Files from a limited set (e.g., "either doc1 or doc2")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT YOU SHOULD DO INSTEAD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+USE DEFAULT MODE (no --deterministic flag):
+  
+  $ minicrypto lock secret.txt
+  
+  Every encryption produces DIFFERENT output (secure!):
+    Encryption 1: hash abc123...
+    Encryption 2: hash def456...  ← DIFFERENT!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONFIRMATION REQUIRED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You must type exactly:
+
+    I UNDERSTAND THE RISKS
+
+to proceed with deterministic encryption.
+
+If you are unsure, type anything else to abort and use the secure default.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This warning is shown to protect YOU.
+
+We designed this software to be secure by default.
+Deterministic mode is a special-purpose tool that trades security for 
+functionality. Only use it if you FULLY understand what you're doing.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

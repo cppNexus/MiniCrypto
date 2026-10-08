@@ -1,0 +1,36 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+bin/
+lib/
+out/
+
+# CPack and packaging
+_CPack_Packages/
+*.tar.gz
+*.sh
+*.deb
+*.rpm
+*.dmg
+
+# OS and Editor files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Temporary and test artifacts
+*.tmp
+*.temp
+*.mcc
+*.mcda
+/test_*
+!tests/
+!tests/**
+doc.txt
+doc.restored.txt
+offline_test.*
+off_in.txt
+off_out.mcc
