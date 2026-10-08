@@ -1,5 +1,7 @@
 # MiniCrypto v2.1
 
+[![Cross-Platform CI](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml/badge.svg)](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml)
+
 **Minimalist, paranoid-grade file and directory encryption for air-gapped systems**
 
 ##  Design Philosophy
@@ -187,7 +189,3 @@ minicrypto test
 # Run full automated test suite (unit + integration)
 ./build/minicrypto_tests
 ```
-
-##  License
-
-MIT License — see [LICENSE](file:///Users/vlad/Coding/MiniCrypto/LICENSE) file.
