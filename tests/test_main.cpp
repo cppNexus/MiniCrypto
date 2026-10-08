@@ -12,7 +12,6 @@
 #include <string>
 #include <cassert>
 #include <cstring>
-#include <sys/stat.h>
 #include <filesystem>
 
 using namespace minicrypto;
@@ -442,10 +441,8 @@ void test_directory_pack_unpack() {
     const std::string archive     = "test_archive.mcda";
     const std::string unpack_dir  = "test_unpack_dir";
 
-    mkdir(test_dir.c_str(), 0755);
-    mkdir((test_dir + "/sub1").c_str(), 0755);
-    mkdir((test_dir + "/sub2").c_str(), 0755);
-    mkdir((test_dir + "/sub2/nested").c_str(), 0755);
+    std::filesystem::create_directories(test_dir + "/sub1");
+    std::filesystem::create_directories(test_dir + "/sub2/nested");
 
     write_file(test_dir + "/root.txt", "Root content");
     write_file(test_dir + "/sub1/file1.txt", "File 1 in sub1");
@@ -471,8 +468,7 @@ void test_directory_encryption_roundtrip() {
     const std::string enc_path   = "test_dir.mcc";
     const std::string dec_dir    = "test_dec_dir";
 
-    mkdir(test_dir.c_str(), 0755);
-    mkdir((test_dir + "/docs").c_str(), 0755);
+    std::filesystem::create_directories(test_dir + "/docs");
     write_file(test_dir + "/readme.md", "# Encrypted Directory Project");
     write_file(test_dir + "/docs/notes.txt", "Confidential notes inside directory");
 
