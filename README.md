@@ -2,17 +2,20 @@
 
 [![Cross-Platform CI](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml/badge.svg)](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml)
 
-**Minimalist, paranoid-grade file and directory encryption for air-gapped systems**
+**Minimalist file and directory encryption for offline / air-gapped systems**
+
+> This README describes the current implementation, not an independent certification.
+> No external security audit has been performed or is planned. See
+> [docs/SECURITY.md](docs/SECURITY.md) for the exact properties and limitations.
 
 ## Design Philosophy
 
-- **Zero network dependencies** — works completely offline
-- **Zero telemetry** — no metrics, no phone home
+- **No network code** — the current sources contain no networking, telemetry, or auto-update
 - **Library-first** — core crypto and directory archiving have no UI dependencies
 - **Mode flexibility** — from password-only to keyfile-only and split-key
-- **Directory support** — seamless streaming archive packing/unpacking and encryption
-- **Headerless support** — for steganography and plausible deniability
-- **Air-gap ready** — static builds, deterministic builds, no runtime surprises
+- **Directory support** — directories are packed into an archive (MCDA) and encrypted as a file
+- **Headerless mode** — omits the full MiniCrypto header (no steganography or deniability guarantee)
+- **Air-gap friendly** — optional static CLI build (completeness depends on your toolchain)
 
 ## ⚠️ CRITICAL WARNING — READ BEFORE USE
 
@@ -44,7 +47,7 @@ minicrypto lock secret.txt
 minicrypto unlock secret.txt.mcc
 # -> secret.txt
 
-# Verify an encrypted backup without restoring it
+# Check that an encrypted file decrypts and its stream tags are valid
 minicrypto verify secret.txt.mcc
 
 # Encrypt an entire directory
@@ -54,9 +57,9 @@ minicrypto lock my_project/
 
 # Decrypt a directory archive
 minicrypto unlock my_project.mcc
-# -> my_project.restored/ (full directory tree restored)
+# -> my_project.restored/ (directory tree restored)
 
-# Two-factor: password + keyfile
+# Password + keyfile
 minicrypto lock secret.txt --mode split-key --keyfile usb.key
 minicrypto unlock secret.txt.mcc --mode split-key --keyfile usb.key
 ```
@@ -79,12 +82,14 @@ minicrypto unlock project.mcc
 minicrypto unlock project.mcc --output ./project/
 ```
 
-- Password → Argon2id → Key
-- Full header with authenticated parameters
-- Best for typical use cases
+- Password → Argon2id (random 32-byte salt) → key
+- Defaults: 3 iterations, 128 MiB memory, 2 threads
+- Normal v2 file: an open header (mode, KDF parameters, plaintext size) followed by the encrypted stream
+- The header fields are **not** authenticated as AEAD associated data; only the encrypted chunks are
 
-`verify` authenticates the complete encrypted stream without re-encrypting it.
-It temporarily decrypts to a file and securely deletes that temporary plaintext.
+`verify` decrypts the stream into a temporary file to check the secretstream tags, then
+attempts to securely delete that temporary file (best-effort). It does not prove the file
+matches the original, and it does not authenticate the whole header.
 
 ### 2. SPLIT-KEY
 
@@ -92,9 +97,11 @@ It temporarily decrypts to a file and securely deletes that temporary plaintext.
 minicrypto lock secret.txt --mode split-key --keyfile usb.key
 ```
 
-- Password + Keyfile → Argon2id → Key
-- Both components required to decrypt
-- Physical + knowledge security (Two-Factor Encryption)
+- Password bytes ‖ keyfile bytes → Argon2id → key
+- Both components are required to decrypt
+- The components are concatenated without a length prefix or delimiter, so this does not
+  guarantee two independent factors
+- A weak password or a keyfile the attacker can obtain is not compensated for
 
 ### 3. KEY-ONLY
 
@@ -102,10 +109,11 @@ minicrypto lock secret.txt --mode split-key --keyfile usb.key
 minicrypto lock secret.txt --mode key-only --keyfile master.key
 ```
 
-- Keyfile → HKDF-BLAKE2b → Key
+- BLAKE2b-256 over `keyfile ‖ salt ‖ "MINICRYPTO::KEY_ONLY::v1"` → key
+- **Not HKDF and not a password KDF**
 - No password required
-- Pure keyfile authentication
-- Perfect for automated backup pipelines
+- Security depends entirely on the keyfile being random and unpredictable;
+  a short or low-entropy keyfile can be guessed offline
 
 ### 4. HEADERLESS
 
@@ -113,53 +121,69 @@ minicrypto lock secret.txt --mode key-only --keyfile master.key
 minicrypto lock secret.txt --mode headerless
 ```
 
-- Minimal header (salt only, 32 bytes)
-- Deterministic nonce derivation
-- Steganography-friendly
-- Deniable encryption
+- No full MiniCrypto header: 32-byte salt, stream header, ciphertext
+- Key via the STANDARD path (password only) or the SPLIT-KEY path (when a keyfile is given)
+- New files derive the stream header from the Argon2id key and the salt; older files with
+  a random stream header remain readable
+- **Not steganography and not plausible deniability.** File length still reveals the data size
 
-### 5. DETERMINISTIC ([WARNING] Dangerous Footgun Mode)
+### 5. DETERMINISTIC (⚠️ dangerous mode)
 
 ```bash
 minicrypto lock backup.tar --deterministic
 ```
 
-- Produces identical ciphertext for identical plaintext + password
-- Requires explicit interactive confirmation
-- Specifically for backup deduplication systems
+- Same plaintext, password, mode, keyfile (if used), and KDF parameters produce the same ciphertext
+- This reveals equality of files and links between copies; guessable plaintext candidates
+  can be tested by comparing ciphertexts
+- Requires explicit interactive confirmation (`I UNDERSTAND THE RISKS`)
+- Intended for cases such as backup deduplication where that leakage is acceptable
+- See [DETERMINISTIC_WARN.txt](DETERMINISTIC_WARN.txt)
+
+### Experimental: fixed-slot container
+
+```bash
+minicrypto container-create ...
+minicrypto container-open ...
+```
+
+A prototype with two equal-size slots (Argon2id, BLAKE2b role key, XChaCha20-Poly1305-IETF AEAD).
+It is **not** a verified deniability guarantee, has no external audit, and does not protect against
+multiple snapshots, observation of the process, or coercion. Do not keep the only copy of
+important data in this format. See [docs/SECURITY.md](docs/SECURITY.md) for details and
+command options.
 
 ## Architecture
 
 ```
 minicrypto/
-├── core/                     # Pure crypto library (no UI dependencies)
-│   ├── crypto.cpp/h          # Encryption/decryption engine
-│   ├── dir_ops.cpp/h         # Directory archive & recursive encryption
-│   ├── keygen.cpp/h          # Key derivation (Argon2id, BLAKE2b/HKDF)
-│   ├── format.cpp/h          # File format constants & header validation
-│   ├── secure_memory.cpp/h   # SecureBuffer/SecureString, mlock
-│   └── file_ops.cpp/h        # AtomicFile, 3-pass secure_delete
+├── core/                     # Crypto library (no UI dependencies; performs file I/O)
+│   ├── crypto.cpp/h          # Streaming encryption/decryption/verification
+│   ├── deniable.cpp/h        # Experimental fixed-slot container
+│   ├── dir_ops.cpp/h         # Directory archive (MCDA) & encryption
+│   ├── keygen.cpp/h          # Key derivation (Argon2id, BLAKE2b)
+│   ├── format.cpp/h          # v2 header & validation
+│   ├── secure_memory.cpp/h   # SecureBuffer/SecureString, best-effort memory locking
+│   └── file_ops.cpp/h        # AtomicFile, best-effort secure_delete
 │
 ├── ui_cli/                   # CLI frontend
 │   ├── main.cpp              # Argument parsing & command dispatch
-│   └── ui.cpp/h              # ProgressBar, interactive password prompt
+│   └── ui.cpp/h              # Progress bar, password prompt
 │
 ├── tests/
-│   └── test_main.cpp         # 15 unit & integration tests
+│   └── test_main.cpp         # Unit & integration tests
 │
 ├── docs/
-│   ├── ARCHITECTURE.md       # Detailed design decisions
-│   └── SECURITY.md           # Threat model & security analysis
+│   ├── ARCHITECTURE.md       # Implementation overview
+│   ├── SECURITY.md           # Facts, limitations, non-guarantees
+│   └── DENIABLE_STORAGE_DESIGN_PLAN.md  # Fixed-slot prototype plan
 │
-├── .github/workflows/
-│   ├── ci.yml                # Cross-platform CI (Linux / macOS / Windows)
-│   ├── release.yml           # Release builds for Debian/Rocky/Arch, macOS & Windows
-│   └── security-audit.yml    # Static binary & dependency security checks
+├── .github/workflows/        # CI, release builds, static/dependency checks
 │
-├── FAQ.md                    # Common questions & answers
-├── DETERMINISTIC_WARN.txt    # Extended warning for deterministic mode
-├── PROJECT_STRUCTURE.md      # Developer onboarding guide
-├── CMakeLists.txt            # Build system (static/shared/CLI/tests)
+├── FAQ.md
+├── DETERMINISTIC_WARN.txt
+├── PROJECT_STRUCTURE.md
+├── CMakeLists.txt
 └── LICENSE                   # MIT
 ```
 
@@ -185,14 +209,18 @@ ctest --output-on-failure
 ./minicrypto_tests
 ```
 
-### Static Build (Air-gapped Systems)
+Passing tests only means the covered scenarios passed in that build.
+
+### Static CLI Build
 
 ```bash
 mkdir build && cd build
 cmake .. -DBUILD_STATIC_CLI=ON
 make
-# Result: fully static binary, no runtime dependencies
 ```
+
+This requests static linking. How complete it is depends on your toolchain and libraries;
+check the resulting binary on your platform (for example with `ldd`).
 
 ### Library Only (No CLI)
 
@@ -227,7 +255,7 @@ using namespace minicrypto;
 EncryptParams params;
 params.mode = EncryptionMode::STANDARD;
 params.argon_time = 3;
-params.argon_mem_kb = 128 * 1024;  // 128 MB
+params.argon_mem_kb = 128 * 1024;  // 128 MiB
 params.argon_threads = 2;
 
 // Progress callback
@@ -250,7 +278,7 @@ using namespace minicrypto;
 EncryptParams params;
 SecureString password("my_password", 11);
 
-// Recursively archives and encrypts the directory
+// Archives the directory and encrypts the archive
 encrypt_directory("my_folder", "my_folder.mcc", password, params);
 
 // Decrypt back to a folder
@@ -258,15 +286,19 @@ DecryptParams dec_params;
 decrypt_directory("my_folder.mcc", "restored_folder", password, dec_params);
 ```
 
-## Security Features
+Directory unpacking writes files sequentially; it is not a transaction, and files written
+before an error may remain on disk.
 
-- **Encryption**: XChaCha20-Poly1305 (libsodium secretstream)
-- **KDF**: Argon2id (configurable t/m/p)
-- **Authentication**: Poly1305 AEAD tag on every chunk
-- **Memory**: `mlock()` to prevent swapping sensitive keys & passwords
-- **Secure deletion**: 3-pass overwrite (0xFF, 0x00, CSPRNG noise) + fsync
-- **Safe I/O**: Atomic writes (`.tmp` write followed by atomic `rename`)
-- **Path Traversal Protection**: Directory unpack checks for `..` and absolute paths
+## Security Features and Limits
+
+- **Encryption**: libsodium `crypto_secretstream_xchacha20poly1305` (XChaCha20-Poly1305), chunks up to 1 MiB
+- **KDF**: Argon2id for STANDARD, SPLIT-KEY, and password-based HEADERLESS (configurable t/m/p); plain BLAKE2b-256 for KEY-ONLY
+- **Authentication**: a Poly1305 tag on every encrypted chunk. The v2 header fields are not covered, `plaintext_size` is not compared with the actual result, and trailing bytes after the final tag are not rejected
+- **Untrusted files**: the header sets Argon2id parameters before decryption (memory up to 10 GiB is accepted), so opening an untrusted file can consume excessive resources
+- **Memory**: `SecureBuffer`/`SecureString` wipe their own buffers and request memory locking; locking can fail, and copies outside these classes are not protected
+- **Secure deletion**: best-effort 3-pass overwrite (0xFF, 0x00, random) with fsync, then unlink. Not reliable on SSDs, CoW filesystems, or with snapshots/backups
+- **File writes**: `AtomicFile` writes a `.tmp` file and renames it. If the rename onto an existing destination fails, the implementation removes the old destination and retries, so the old file is not guaranteed to survive a failure
+- **Path traversal**: directory unpack rejects paths containing `..` and leading `/` or `\`. This is a basic check, not a full sandbox guarantee on every OS
 
 ## Testing
 
@@ -274,11 +306,10 @@ decrypt_directory("my_folder.mcc", "restored_folder", password, dec_params);
 # Run built-in self-tests via CLI
 minicrypto test
 
-# Run full automated test suite (unit + integration)
+# Run the full automated test suite (unit + integration)
 ./build/minicrypto_tests
 ```
 
-## Release verification
 ## Release Signature Verification
 
 Official MiniCrypto releases are signed using [minisign](https://jedisct1.github.io/minisign/).
@@ -301,6 +332,14 @@ minisign -Vm SHA256SUMS -p minicrypto-release.pub
 Then verify the downloaded artifacts against the checksums listed in `SHA256SUMS`.
 
 **Security note:** Obtain and verify the public key through a trusted channel independent of the downloaded release artifacts.
+A checksum only checks a file against a manifest; it is not proof of authorship.
+
+## Further Reading
+
+- [docs/SECURITY.md](docs/SECURITY.md) — what is and is not guaranteed
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — implementation overview
+- [FAQ.md](FAQ.md)
+- [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
 
 ## License
 
