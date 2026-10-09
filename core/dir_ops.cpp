@@ -1,6 +1,5 @@
 #include "dir_ops.h"
 #include "file_ops.h"
-#include "format.h"
 
 #include <filesystem>
 #include <fstream>
@@ -8,12 +7,15 @@
 #include <algorithm>
 #include <system_error>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <set>
 
 namespace fs = std::filesystem;
 
 namespace minicrypto {
+
+static constexpr std::size_t COPY_BUFFER_SIZE = 64 * 1024;
 
 // ── Filesystem helpers ────────────────────────────────────────────────────────
 
@@ -158,7 +160,7 @@ void pack_directory(
     write_u32_le(out, ARCHIVE_VERSION);
 
     uint64_t bytes_written = 8;
-    std::vector<char> copy_buf(CHUNK_SIZE);
+    std::vector<char> copy_buf(COPY_BUFFER_SIZE);
 
     // Write explicit directory entries (trailing '/', file_size = 0)
     for (const auto& dir_rel : empty_dir_entries) {
@@ -259,7 +261,7 @@ void unpack_directory(
             "cannot create directory: " + out_dir + " (" + ec.message() + ")");
     }
 
-    std::vector<char> copy_buf(CHUNK_SIZE);
+    std::vector<char> copy_buf(COPY_BUFFER_SIZE);
     uint64_t bytes_read = 8;
 
     while (true) {
