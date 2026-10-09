@@ -16,22 +16,23 @@ namespace minicrypto {
 //
 // Archive format (little-endian, no padding):
 //   [4]  magic   = 0x4D434441  "MCDA"
-//   [4]  version = 1
+//   [4]  version = 2
 //   Per entry:
 //     [2]  path_len   (uint16_t)
-//     [N]  path       (UTF-8 relative path, no leading '/')
+//     [N]  path       (UTF-8 relative path; trailing '/' marks a directory)
 //     [8]  file_size  (uint64_t)
-//     [M]  file_data
+//     [M]  file_data  (0 bytes for directory entries)
 //   End marker:
 //     [2]  path_len = 0
 // ─────────────────────────────────────────────────────────────────────────────
 
-constexpr uint32_t ARCHIVE_MAGIC   = 0x4D434441;  // "MCDA"
-constexpr uint32_t ARCHIVE_VERSION = 1;
+constexpr uint32_t ARCHIVE_MAGIC       = 0x4D434441;  // "MCDA"
+constexpr uint32_t ARCHIVE_VERSION     = 2;           // current write version
+constexpr uint32_t ARCHIVE_VERSION_MIN = 1;           // minimum supported read version
 
-/// Pack all files in `dir_path` (recursively) into a single archive written to
-/// `archive_path`.  Calls `progress` with (bytes_written) whenever a chunk is
-/// flushed; may be nullptr.
+/// Pack files and empty directories in `dir_path` recursively into an archive
+/// written to `archive_path`. Directory entries have a trailing '/' and size 0.
+/// Calls `progress` with (bytes_written) whenever a chunk is flushed; may be nullptr.
 void pack_directory(
     const std::string& dir_path,
     const std::string& archive_path,

@@ -443,11 +443,13 @@ void test_directory_pack_unpack() {
 
     std::filesystem::create_directories(test_dir + "/sub1");
     std::filesystem::create_directories(test_dir + "/sub2/nested");
+    std::filesystem::create_directories(test_dir + "/empty/nested");
 
     write_file(test_dir + "/root.txt", "Root content");
     write_file(test_dir + "/sub1/file1.txt", "File 1 in sub1");
     write_file(test_dir + "/sub2/file2.txt", "File 2 in sub2");
     write_file(test_dir + "/sub2/nested/deep.txt", "Deep nested file content");
+    write_file(test_dir + "/empty_file.txt", "");
 
     pack_directory(test_dir, archive);
 
@@ -457,6 +459,10 @@ void test_directory_pack_unpack() {
     TEST_ASSERT(read_file(unpack_dir + "/sub1/file1.txt") == "File 1 in sub1", "sub1/file1.txt match");
     TEST_ASSERT(read_file(unpack_dir + "/sub2/file2.txt") == "File 2 in sub2", "sub2/file2.txt match");
     TEST_ASSERT(read_file(unpack_dir + "/sub2/nested/deep.txt") == "Deep nested file content", "deep.txt match");
+    TEST_ASSERT(std::filesystem::is_directory(unpack_dir + "/empty"), "empty directory is restored");
+    TEST_ASSERT(std::filesystem::is_directory(unpack_dir + "/empty/nested"), "nested empty directory is restored");
+    TEST_ASSERT(std::filesystem::is_regular_file(unpack_dir + "/empty_file.txt"), "zero-byte file remains a file");
+    TEST_ASSERT(read_file(unpack_dir + "/empty_file.txt").empty(), "zero-byte file remains empty");
 
     remove_rf(test_dir);
     remove_rf(unpack_dir);

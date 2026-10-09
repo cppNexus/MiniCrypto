@@ -9,6 +9,7 @@
 #include <system_error>
 #include <cstdint>
 #include <cstring>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -119,6 +120,32 @@ void pack_directory(
     }
 
     std::vector<std::string> files = collect_files(dir_path);
+    fs::path base(dir_path);
+
+    // Build set of directories auto-created as parent paths of file entries
+    std::set<std::string> file_parent_dirs;
+    for (const auto& f : files) {
+        for (fs::path cur = fs::path(f).parent_path();
+             !cur.empty() && cur.generic_string() != ".";
+             cur = cur.parent_path()) {
+            file_parent_dirs.insert(cur.generic_string());
+        }
+    }
+
+    // Collect directories that won't be implicitly recreated (empty dirs)
+    std::vector<std::string> empty_dir_entries;
+    {
+        std::error_code ec;
+        for (const auto& entry : fs::recursive_directory_iterator(base, ec)) {
+            if (!entry.is_directory(ec)) continue;
+            fs::path rel = fs::relative(entry.path(), base, ec);
+            std::string rel_str = rel.generic_string();
+            if (file_parent_dirs.find(rel_str) == file_parent_dirs.end()) {
+                empty_dir_entries.push_back(rel_str + "/");
+            }
+        }
+        std::sort(empty_dir_entries.begin(), empty_dir_entries.end());
+    }
 
     std::ofstream out(archive_path, std::ios::binary);
     if (!out) {
@@ -126,15 +153,29 @@ void pack_directory(
             "cannot create archive: " + archive_path);
     }
 
-    // Write header
+    // Write header (v2: supports explicit directory entries)
     write_u32_le(out, ARCHIVE_MAGIC);
     write_u32_le(out, ARCHIVE_VERSION);
 
     uint64_t bytes_written = 8;
     std::vector<char> copy_buf(CHUNK_SIZE);
 
-    fs::path base(dir_path);
+    // Write explicit directory entries (trailing '/', file_size = 0)
+    for (const auto& dir_rel : empty_dir_entries) {
+        if (dir_rel.size() > 0xFFFF) {
+            throw CryptoException(ErrorCode::IO_ERROR,
+                "path too long (>65535): " + dir_rel);
+        }
+        auto path_len = static_cast<uint16_t>(dir_rel.size());
+        write_u16_le(out, path_len);
+        out.write(dir_rel.data(), path_len);
+        if (!out) throw CryptoException(ErrorCode::IO_ERROR, "archive write error (dir entry)");
+        write_u64_le(out, 0);
+        bytes_written += 2 + path_len + 8;
+        if (progress) progress(bytes_written);
+    }
 
+    // Write file entries
     for (const auto& rel : files) {
         fs::path full_path = base / rel;
 
@@ -205,7 +246,7 @@ void unpack_directory(
         throw CryptoException(ErrorCode::CORRUPTED_FILE,
             "not a MiniCrypto directory archive (bad magic)");
     }
-    if (version != ARCHIVE_VERSION) {
+    if (version < ARCHIVE_VERSION_MIN || version > ARCHIVE_VERSION) {
         throw CryptoException(ErrorCode::CORRUPTED_FILE,
             "unsupported archive version: " + std::to_string(version));
     }
@@ -232,8 +273,13 @@ void unpack_directory(
                 "archive truncated (path data)");
         }
 
+        // Detect directory entry (trailing '/' — written by v2 pack for empty dirs)
+        const bool is_dir_entry = (!rel.empty() && rel.back() == '/');
+        const std::string rel_path = is_dir_entry ? rel.substr(0, rel.size() - 1) : rel;
+
         // Security check: reject directory traversal
-        if (rel.find("..") != std::string::npos || rel[0] == '/' || rel[0] == '\\') {
+        if (rel_path.find("..") != std::string::npos
+            || (!rel_path.empty() && (rel_path[0] == '/' || rel_path[0] == '\\'))) {
             throw CryptoException(ErrorCode::CORRUPTED_FILE,
                 "archive contains forbidden path traversal: " + rel);
         }
@@ -241,7 +287,24 @@ void unpack_directory(
         uint64_t file_size = read_u64_le(in);
         bytes_read += 2 + path_len + 8;
 
-        fs::path full_dest = target_base / rel;
+        // Directory entries are flagged by a trailing slash and must have no payload.
+        if (is_dir_entry) {
+            if (file_size != 0) {
+                throw CryptoException(ErrorCode::CORRUPTED_FILE,
+                    "directory entry has non-zero size: " + rel);
+            }
+            fs::path full_dest = target_base / rel_path;
+            fs::create_directories(full_dest, ec);
+            if (ec) {
+                throw CryptoException(ErrorCode::PERMISSION_DENIED,
+                    "cannot create directory: " + full_dest.string());
+            }
+            if (progress) progress(bytes_read);
+            continue;
+        }
+
+        // Handle file entry
+        fs::path full_dest = target_base / rel_path;
         fs::create_directories(full_dest.parent_path(), ec);
         if (ec) {
             throw CryptoException(ErrorCode::PERMISSION_DENIED,
@@ -261,7 +324,7 @@ void unpack_directory(
             std::streamsize got = in.gcount();
             if (got <= 0) {
                 throw CryptoException(ErrorCode::CORRUPTED_FILE,
-                    "archive truncated while reading: " + rel);
+                    "archive truncated while reading: " + rel_path);
             }
             out_file.write(copy_buf.data(), got);
             if (!out_file) {
