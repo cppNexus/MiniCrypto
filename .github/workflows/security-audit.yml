@@ -1,4 +1,4 @@
-name: Security Audit
+name: Automated Security Checks (not a cryptographic audit)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   static-binary-audit:
-    name: Static Binary Security Check
+    name: Static Binary and Network Heuristic Checks
     runs-on: ubuntu-latest
 
     steps:
@@ -120,7 +120,7 @@ jobs:
         fi
 
   dependency-audit:
-    name: Dependency Security Audit
+    name: Dependency Allowlist and Source Checks
     runs-on: ubuntu-latest
 
     steps:
@@ -130,7 +130,7 @@ jobs:
       run: |
         echo "━━━ Checking dependencies ━━━"
 
-        # List of allowed dependencies (must be audited crypto libraries)
+        # Allowlist of dependencies expected by this build; this is not a review of their security.
         ALLOWED_DEPS="libsodium libargon2 libc libpthread libm"
 
         # Extract dependencies from CMakeLists.txt
@@ -222,7 +222,7 @@ jobs:
         echo "[PASS] PASS: Version validation present"
 
   memory-safety-check:
-    name: Memory Safety Audit
+    name: Source-Level Memory Heuristic Checks
     runs-on: ubuntu-latest
 
     steps:
@@ -301,27 +301,21 @@ jobs:
         echo "[PASS] PASS: Deterministic warnings implemented"
 
   build-report:
-    name: Generate Security Report
+    name: Summarize Automated Checks
     runs-on: ubuntu-latest
     needs: [static-binary-audit, dependency-audit, format-version-check, memory-safety-check, documentation-check]
 
     steps:
-    - name: Security audit summary
+    - name: Automated checks summary
       run: |
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "[PASS] SECURITY AUDIT PASSED"
+        echo "AUTOMATED CHECKS PASSED (NOT A SECURITY OR CRYPTOGRAPHIC AUDIT)"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "[v] Static binary has no dynamic dependencies"
-        echo "[v] No network symbols or syscalls detected"
-        echo "[v] Works completely offline"
-        echo "[v] Only whitelisted dependencies (libsodium, libargon2)"
-        echo "[v] No telemetry code"
-        echo "[v] Format versioning implemented"
-        echo "[v] Memory safety checks passed"
-        echo "[v] Secure zeroization implemented"
-        echo "[v] Security documentation complete"
-        echo "[v] Deterministic mode warnings in place"
+        echo "- Static-linking and network-symbol checks ran for this Linux job only"
+        echo "- Dependency allowlist and source-pattern checks ran"
+        echo "- These checks do not prove absence of networking, memory bugs, or vulnerabilities"
+        echo "- This workflow does not audit cryptographic design or establish production readiness"
         echo ""
-        echo "Binary is ready for air-gapped deployment."
+        echo "Users must assess the source, build, platform, and operational risks for their use case."
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -26,6 +26,7 @@ endif()
 # === CORE LIBRARY (no UI dependencies) ===
 set(CORE_SOURCES
     core/crypto.cpp
+    core/deniable.cpp
     core/keygen.cpp
     core/format.cpp
     core/secure_memory.cpp
@@ -35,6 +36,7 @@ set(CORE_SOURCES
 
 set(CORE_HEADERS
     core/crypto.h
+    core/deniable.h
     core/keygen.h
     core/format.h
     core/secure_memory.h
@@ -45,14 +47,28 @@ set(CORE_HEADERS
 # Find required libraries
 find_package(PkgConfig QUIET)
 if(PKG_CONFIG_FOUND)
-    pkg_check_modules(SODIUM REQUIRED libsodium)
-    pkg_check_modules(ARGON2 REQUIRED libargon2)
-else()
-    # Fallback for Windows / environments without pkg-config
+    pkg_check_modules(SODIUM QUIET libsodium)
+    pkg_check_modules(ARGON2 QUIET libargon2)
+endif()
+
+# Fallback for platforms where pkg-config or one of the .pc modules is absent
+# (e.g. some Windows/vcpkg and macOS package-manager configurations).
+if(NOT SODIUM_FOUND)
     find_path(SODIUM_INCLUDE_DIRS NAMES sodium.h PATH_SUFFIXES sodium)
-    find_library(SODIUM_LIBRARIES NAMES sodium libsodium)
+    find_library(SODIUM_LIBRARY NAMES sodium libsodium)
+    if(NOT SODIUM_INCLUDE_DIRS OR NOT SODIUM_LIBRARY)
+        message(FATAL_ERROR "libsodium headers and library are required")
+    endif()
+    set(SODIUM_LIBRARIES ${SODIUM_LIBRARY})
+endif()
+
+if(NOT ARGON2_FOUND)
     find_path(ARGON2_INCLUDE_DIRS NAMES argon2.h)
-    find_library(ARGON2_LIBRARIES NAMES argon2 libargon2)
+    find_library(ARGON2_LIBRARY NAMES argon2 libargon2)
+    if(NOT ARGON2_INCLUDE_DIRS OR NOT ARGON2_LIBRARY)
+        message(FATAL_ERROR "libargon2 headers and library are required")
+    endif()
+    set(ARGON2_LIBRARIES ${ARGON2_LIBRARY})
 endif()
 
 # Core library
@@ -98,13 +114,14 @@ if(BUILD_CLI)
         ui_cli/main.cpp
         ui_cli/ui.cpp
     )
-    
+
     set(CLI_HEADERS
         ui_cli/ui.h
     )
-    
+
     if(BUILD_STATIC_CLI)
-        # Fully static CLI for air-gapped systems
+        # Request static linking where the target toolchain and dependencies support it.
+        # This option does not guarantee a fully static binary on every platform.
         add_executable(minicrypto ${CLI_SOURCES})
         if(MSVC)
             set_property(TARGET minicrypto PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -132,7 +149,7 @@ if(BUILD_CLI)
                 minicrypto_core
         )
     endif()
-    
+
     target_include_directories(minicrypto
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}

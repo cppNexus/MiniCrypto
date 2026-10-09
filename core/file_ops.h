@@ -6,7 +6,8 @@
 
 namespace minicrypto {
 
-// Atomic file writer (write to .tmp, then rename)
+// Temporary-file writer followed by rename. Platform/failure-mode limitations
+// apply; this is not a universal guarantee that an existing target is preserved.
 class AtomicFile {
     std::filesystem::path final_path_;
     std::filesystem::path temp_path_;
@@ -24,8 +25,8 @@ public:
     AtomicFile& operator=(const AtomicFile&) = delete;
 };
 
-// Secure file deletion (3-pass overwrite + fsync)
-// WARNING: Best-effort only on SSD/CoW filesystems
+// Best-effort file overwrite (multiple passes) and unlink. Physical erasure is
+// not guaranteed; errors and filesystem/device behavior can leave recoverable data.
 void secure_delete(const std::filesystem::path& path);
 
 } // namespace minicrypto

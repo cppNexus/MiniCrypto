@@ -30,6 +30,9 @@ public:
 
 // Get password from terminal (secure input)
 SecureString get_password_interactive(bool confirm);
+SecureString get_password_interactive(bool confirm, const std::string& label);
+bool is_terminal_input();
+std::string get_optional_path_interactive(const std::string& prompt);
 
 // Warning message
 void warn(const std::string& msg);

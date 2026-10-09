@@ -11,7 +11,7 @@ namespace minicrypto {
 // Domain separation constants
 constexpr const char* DOMAIN_DETERMINISTIC_PREKEY = "MINICRYPTO::DETERMINISTIC_PREKEY::v1";
 constexpr const char* DOMAIN_DETERMINISTIC_SALT = "MINICRYPTO::DETERMINISTIC_SALT::v1";
-constexpr const char* DOMAIN_HEADERLESS_NONCE = "MINICRYPTO::HEADERLESS_NONCE::v1";
+constexpr const char* DOMAIN_HEADERLESS_STREAM_HEADER = "MINICRYPTO::HEADERLESS_STREAM_HEADER::v1";
 
 // Mode 1: STANDARD
 void derive_key_standard(
@@ -41,11 +41,12 @@ void derive_key_from_keyfile(
     unsigned char* key_out
 );
 
-// Mode 4: HEADERLESS
-void derive_nonce_headerless(
-    const SecureString& password,
+// Mode 4: HEADERLESS. Derive the secretstream header from the KDF key,
+// never directly from the password, to preserve the password KDF cost.
+void derive_headerless_stream_header(
+    const unsigned char* key,
     const unsigned char* salt,
-    unsigned char* nonce_out
+    unsigned char* stream_header_out
 );
 
 // DETERMINISTIC MODE
