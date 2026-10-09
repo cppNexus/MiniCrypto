@@ -24,11 +24,13 @@ namespace minicrypto {
 //     [M]  file_data  (0 bytes for directory entries)
 //   End marker:
 //     [2]  path_len = 0
+//   Maximum stored path length: 4096 bytes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 constexpr uint32_t ARCHIVE_MAGIC       = 0x4D434441;  // "MCDA"
 constexpr uint32_t ARCHIVE_VERSION     = 2;           // current write version
 constexpr uint32_t ARCHIVE_VERSION_MIN = 1;           // minimum supported read version
+constexpr uint16_t ARCHIVE_MAX_PATH_LEN = 4096;
 
 /// Pack files and empty directories in `dir_path` recursively into an archive
 /// written to `archive_path`. Directory entries have a trailing '/' and size 0.

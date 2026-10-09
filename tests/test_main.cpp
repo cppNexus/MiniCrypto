@@ -562,6 +562,35 @@ void test_path_traversal_prevention() {
     remove_rf(unpack_dir);
 }
 
+void test_archive_path_length_limit() {
+    const std::string bad_archive = "test_long_path.mcda";
+    const std::string unpack_dir = "test_long_path_dir";
+
+    // A malicious header must be rejected before trying to read its path bytes.
+    {
+        std::ofstream out(bad_archive, std::ios::binary);
+        uint32_t magic = ARCHIVE_MAGIC;
+        uint32_t ver = ARCHIVE_VERSION;
+        out.write(reinterpret_cast<char*>(&magic), 4);
+        out.write(reinterpret_cast<char*>(&ver), 4);
+
+        uint16_t path_len = ARCHIVE_MAX_PATH_LEN + 1;
+        out.write(reinterpret_cast<char*>(&path_len), 2);
+    }
+
+    bool caught = false;
+    try {
+        unpack_directory(bad_archive, unpack_dir);
+    } catch (const CryptoException& e) {
+        if (e.get_code() == ErrorCode::CORRUPTED_FILE) caught = true;
+    }
+
+    TEST_ASSERT(caught, "archive path longer than 4096 bytes must be rejected");
+
+    remove_file(bad_archive);
+    remove_rf(unpack_dir);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -588,6 +617,7 @@ int main() {
     RUN_TEST(test_directory_pack_unpack);
     RUN_TEST(test_directory_encryption_roundtrip);
     RUN_TEST(test_path_traversal_prevention);
+    RUN_TEST(test_archive_path_length_limit);
     RUN_TEST(test_atomic_file);
 
     std::cout << "========================================\n";

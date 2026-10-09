@@ -162,9 +162,9 @@ void pack_directory(
 
     // Write explicit directory entries (trailing '/', file_size = 0)
     for (const auto& dir_rel : empty_dir_entries) {
-        if (dir_rel.size() > 0xFFFF) {
+        if (dir_rel.size() > ARCHIVE_MAX_PATH_LEN) {
             throw CryptoException(ErrorCode::IO_ERROR,
-                "path too long (>65535): " + dir_rel);
+                "path too long (>4096): " + dir_rel);
         }
         auto path_len = static_cast<uint16_t>(dir_rel.size());
         write_u16_le(out, path_len);
@@ -179,9 +179,9 @@ void pack_directory(
     for (const auto& rel : files) {
         fs::path full_path = base / rel;
 
-        if (rel.size() > 0xFFFF) {
+        if (rel.size() > ARCHIVE_MAX_PATH_LEN) {
             throw CryptoException(ErrorCode::IO_ERROR,
-                "path too long (>65535): " + rel);
+            "path too long (>4096): " + rel);
         }
         uint16_t path_len = static_cast<uint16_t>(rel.size());
 
@@ -265,6 +265,10 @@ void unpack_directory(
     while (true) {
         uint16_t path_len = read_u16_le(in);
         if (path_len == 0) break; // End marker
+        if (path_len > ARCHIVE_MAX_PATH_LEN) {
+            throw CryptoException(ErrorCode::CORRUPTED_FILE,
+                "archive path exceeds maximum length (4096 bytes)");
+        }
 
         std::string rel(path_len, '\0');
         in.read(&rel[0], path_len);
