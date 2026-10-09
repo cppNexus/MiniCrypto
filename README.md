@@ -284,7 +284,7 @@ independent trusted channel.
 Users should verify the manifest signature before trusting any listed hashes:
 
 ```bash
-minisign -Vm SHA256SUMS -P '<trusted-public-key>'
+minisign -Vm <file> -P RWQTVmJKWWGaAR24YFh9XPQiwNlIyNf0ZeMsWuzs09avgCani/6Nzeoo
 sha256sum -c SHA256SUMS
 ```
 
