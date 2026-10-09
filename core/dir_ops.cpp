@@ -357,11 +357,9 @@ void encrypt_directory(
     try {
         pack_directory(dir_path, tmp_archive, params.progress_callback);
         encrypt_file(tmp_archive, output_path, password, params);
-        std::error_code ec;
-        fs::remove(tmp_archive, ec);
+        secure_delete(tmp_archive);
     } catch (...) {
-        std::error_code ec;
-        fs::remove(tmp_archive, ec);
+        secure_delete(tmp_archive);
         throw;
     }
 }
