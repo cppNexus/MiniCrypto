@@ -134,7 +134,7 @@ minicrypto/
 │
 ├── .github/workflows/
 │   ├── ci.yml                # Cross-platform CI (Linux / macOS / Windows)
-│   ├── release.yml           # Release builds, tests, packages & GitHub Releases
+│   ├── release.yml           # Release builds for Debian/Rocky/Arch, macOS & Windows
 │   └── security-audit.yml    # Static binary & dependency security checks
 │
 ├── FAQ.md                    # Common questions & answers

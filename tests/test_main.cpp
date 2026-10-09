@@ -619,6 +619,7 @@ void test_unicode_filesystem_paths() {
     std::ifstream decrypted_file(decrypted, std::ios::binary);
     std::string decrypted_contents((std::istreambuf_iterator<char>(decrypted_file)),
         std::istreambuf_iterator<char>());
+    decrypted_file.close();
     TEST_ASSERT(decrypted_contents == "Unicode path roundtrip", "Unicode file API paths roundtrip");
 
     pack_directory(root, archive);
@@ -629,6 +630,7 @@ void test_unicode_filesystem_paths() {
         std::ios::binary);
     std::string contents((std::istreambuf_iterator<char>(restored_file)),
         std::istreambuf_iterator<char>());
+    restored_file.close();
     TEST_ASSERT(contents == "Unicode path roundtrip", "Unicode archive paths roundtrip");
 
     fs::remove_all(root);

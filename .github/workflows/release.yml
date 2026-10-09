@@ -20,18 +20,32 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            platform: linux-x86_64
+            platform: debian12-x86_64
+            container_image: debian:bookworm-slim
+            distro: debian
+          - os: ubuntu-latest
+            platform: rocky9-x86_64
+            container_image: rockylinux:9
+            distro: rocky
+          - os: ubuntu-latest
+            platform: archlinux-x86_64
+            container_image: archlinux:latest
+            distro: arch
           - os: macos-latest
             platform: macos
+            container_image: ''
+            distro: ''
           - os: windows-latest
             platform: windows-x86_64
+            container_image: ''
+            distro: ''
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.container_image == ''
         run: |
           sudo apt-get update
           sudo apt-get install -y libsodium-dev libargon2-dev pkg-config
@@ -44,8 +58,37 @@ jobs:
         if: runner.os == 'Windows'
         run: vcpkg install libsodium:x64-windows argon2:x64-windows
 
+      - name: Build and test in Linux distribution image
+        if: matrix.container_image != ''
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            "${{ matrix.container_image }}" \
+            /bin/sh -ec '
+              case "${{ matrix.distro }}" in
+                debian)
+                  apt-get update
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                    build-essential cmake pkg-config libsodium-dev libargon2-dev
+                  ;;
+                rocky)
+                  dnf install -y dnf-plugins-core epel-release
+                  dnf config-manager --set-enabled crb
+                  dnf install -y cmake gcc-c++ make pkgconf-pkg-config libsodium-devel argon2-devel
+                  ;;
+                arch)
+                  pacman -Syu --noconfirm --needed base-devel cmake pkgconf libsodium argon2
+                  ;;
+              esac
+              cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+              cmake --build build --parallel
+              ctest --test-dir build --output-on-failure
+            '
+
       - name: Configure Release build (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.container_image == ''
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 
       - name: Configure Release build (Windows)
@@ -58,9 +101,11 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build Release
+        if: matrix.container_image == ''
         run: cmake --build build --config Release --parallel
 
       - name: Run tests
+        if: matrix.container_image == ''
         run: ctest --test-dir build -C Release --output-on-failure
 
       - name: Package release (Linux/macOS)
