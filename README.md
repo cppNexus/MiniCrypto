@@ -13,34 +13,25 @@
 - **Directory support** — seamless streaming archive packing/unpacking and encryption
 - **Headerless support** — for steganography and plausible deniability
 - **Air-gap ready** — static builds, deterministic builds, no runtime surprises
-
-<div align="center" style="background-color:#8B0000; color:#FFFFFF; padding:20px; border-radius:8px;">
   
-## ⚠️ DISCLAIMER — READ BEFORE USE
+## ⚠️ CRITICAL WARNING — READ BEFORE USE
 
-**MINICRYPTO IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
+**MINICRYPTO CAN CAUSE PERMANENT AND IRREVERSIBLE DATA LOSS.**
 
-**BY USING MINICRYPTO, YOU ACCEPT THE FOLLOWING RISKS AND RESPONSIBILITIES.**
+By using this software, you acknowledge and accept the following risks:
 
-- **LOST PASSWORDS AND KEYS:** If you lose or forget your password, keyfile, or any required encryption credentials, your encrypted data may become permanently unrecoverable. There is no password reset, backdoor, or guaranteed recovery mechanism. The developer cannot recover your data for you.
+- **LOST PASSWORDS OR KEYFILES:** If you lose or forget a required password or keyfile, your encrypted data may become permanently unrecoverable. There is no password reset, master key, backdoor, or guaranteed recovery mechanism. The developer cannot recover your data.
+- **CORRUPTED OR LOST DATA:** Software defects, incorrect usage, hardware failures, power loss, filesystem errors, interrupted operations, or other unforeseen circumstances may damage or permanently destroy your data.
+- **BACKUPS ARE YOUR RESPONSIBILITY:** Always maintain independent backups of important files before encrypting, decrypting, archiving, extracting, or deleting data.
+- **VERIFY BEFORE DELETING ORIGINALS:** Never delete original files until you have verified the encrypted output and successfully decrypted and restored a test copy.
+- **NO GUARANTEE OF SECURITY:** No software is guaranteed to be free of vulnerabilities, implementation errors, or security weaknesses. Use this software only if you understand and accept the associated risks.
+- **SECURE DELETION IS NOT GUARANTEED:** SSDs, flash storage, copy-on-write filesystems, journaling, wear leveling, snapshots, and backups may prevent reliable physical erasure of data.
+- **DETERMINISTIC ENCRYPTION:** Deterministic mode may reveal relationships between repeated plaintext inputs and their ciphertexts. Use it only if you understand the implications.
+- **NO LIABILITY:** MiniCrypto is provided under the terms of the MIT License, including its warranty disclaimer and limitation of liability. To the maximum extent permitted by applicable law, the authors and contributors disclaim liability for data loss, corruption, loss of access, security incidents, or other damages arising from the use of this software.
 
-- **DATA LOSS AND CORRUPTION:** Encryption, decryption, archiving, extraction, storage failures, hardware faults, power loss, software defects, or user error may result in damaged, incomplete, or permanently lost data.
+**YOU ARE SOLELY RESPONSIBLE FOR SAFEGUARDING YOUR PASSWORDS, KEYFILES, AND BACKUPS.**
 
-- **BACKUPS ARE YOUR RESPONSIBILITY:** Always maintain verified, independent backups of important data before encrypting, decrypting, overwriting, securely deleting, or otherwise modifying files. Never treat an encrypted copy as your only backup.
-
-- **VERIFY BEFORE DELETING ORIGINALS:** Do not delete original files until you have independently verified the encrypted archive and confirmed that you can successfully decrypt and restore the data.
-
-- **NO GUARANTEE OF SECURITY OR FITNESS:** Although MiniCrypto is designed to use established cryptographic primitives, no software can be guaranteed free of vulnerabilities, implementation defects, or security weaknesses. Use of this software does not guarantee confidentiality, integrity, or protection against every attack.
-
-- **DETERMINISTIC MODE:** Deterministic encryption can reveal when identical inputs produce identical ciphertexts and may expose information about repeated data. Use it only when you understand and accept these risks.
-
-- **SECURE DELETION LIMITATIONS:** Secure deletion cannot be guaranteed on SSDs, flash storage, copy-on-write filesystems, journaled filesystems, cloud-synced folders, or storage devices that retain historical copies or remapped blocks.
-
-- **NO LIABILITY:** To the maximum extent permitted by applicable law, the developer and contributors shall not be liable for data loss, data corruption, loss of access, security incidents, financial loss, or any direct, indirect, incidental, special, or consequential damages arising from the use or inability to use MiniCrypto.
-
-**YOU ARE SOLELY RESPONSIBLE FOR YOUR PASSWORDS, KEYS, BACKUPS, AND THE CONSEQUENCES OF USING THIS SOFTWARE.**
-
-**IF YOU DO NOT UNDERSTAND THESE RISKS, DO NOT USE MINICRYPTO ON IMPORTANT DATA.**
+**IF YOU CANNOT AFFORD TO LOSE THE DATA, DO NOT USE MINICRYPTO WITHOUT VERIFIED, INDEPENDENT BACKUPS.**
 
 ## Quick Start
 
