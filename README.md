@@ -14,6 +14,34 @@
 - **Headerless support** — for steganography and plausible deniability
 - **Air-gap ready** — static builds, deterministic builds, no runtime surprises
 
+<div align="center" style="background-color:#8B0000; color:#FFFFFF; padding:20px; border-radius:8px;">
+  
+## ⚠️ DISCLAIMER — READ BEFORE USE
+
+**MINICRYPTO IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
+
+**BY USING MINICRYPTO, YOU ACCEPT THE FOLLOWING RISKS AND RESPONSIBILITIES.**
+
+- **LOST PASSWORDS AND KEYS:** If you lose or forget your password, keyfile, or any required encryption credentials, your encrypted data may become permanently unrecoverable. There is no password reset, backdoor, or guaranteed recovery mechanism. The developer cannot recover your data for you.
+
+- **DATA LOSS AND CORRUPTION:** Encryption, decryption, archiving, extraction, storage failures, hardware faults, power loss, software defects, or user error may result in damaged, incomplete, or permanently lost data.
+
+- **BACKUPS ARE YOUR RESPONSIBILITY:** Always maintain verified, independent backups of important data before encrypting, decrypting, overwriting, securely deleting, or otherwise modifying files. Never treat an encrypted copy as your only backup.
+
+- **VERIFY BEFORE DELETING ORIGINALS:** Do not delete original files until you have independently verified the encrypted archive and confirmed that you can successfully decrypt and restore the data.
+
+- **NO GUARANTEE OF SECURITY OR FITNESS:** Although MiniCrypto is designed to use established cryptographic primitives, no software can be guaranteed free of vulnerabilities, implementation defects, or security weaknesses. Use of this software does not guarantee confidentiality, integrity, or protection against every attack.
+
+- **DETERMINISTIC MODE:** Deterministic encryption can reveal when identical inputs produce identical ciphertexts and may expose information about repeated data. Use it only when you understand and accept these risks.
+
+- **SECURE DELETION LIMITATIONS:** Secure deletion cannot be guaranteed on SSDs, flash storage, copy-on-write filesystems, journaled filesystems, cloud-synced folders, or storage devices that retain historical copies or remapped blocks.
+
+- **NO LIABILITY:** To the maximum extent permitted by applicable law, the developer and contributors shall not be liable for data loss, data corruption, loss of access, security incidents, financial loss, or any direct, indirect, incidental, special, or consequential damages arising from the use or inability to use MiniCrypto.
+
+**YOU ARE SOLELY RESPONSIBLE FOR YOUR PASSWORDS, KEYS, BACKUPS, AND THE CONSEQUENCES OF USING THIS SOFTWARE.**
+
+**IF YOU DO NOT UNDERSTAND THESE RISKS, DO NOT USE MINICRYPTO ON IMPORTANT DATA.**
+
 ## Quick Start
 
 ```bash
@@ -260,43 +288,28 @@ minicrypto test
 ```
 
 ## Release verification
+## Release Signature Verification
 
-For each `v*` tag, `release.yml` builds and tests packages for Debian, Rocky Linux,
-Arch Linux, macOS, and Windows. It creates a **draft** GitHub Release containing
-the platform archives, per-archive `.sha256` files, `SHA256SUMS`, and
-`SBOM.spdx.json`. The Rocky Linux build installs the EPEL development package
-`libargon2-devel`.
+Official MiniCrypto releases are signed using [minisign](https://jedisct1.github.io/minisign/).
 
-The draft is intentionally not published automatically: the workflow does not
-have access to the release-signing private key. On a trusted, offline machine,
-review the release inputs (and reproduce the build where practical), then sign
-the manifest with minisign using a private key stored only on that machine:
+The release signing public key is:
+
+```text
+untrusted comment: minisign public key 019A61594A625613
+RWQTVmJKWWGaAR24YFh9XPQiwNlIyNf0ZeMsWuzs09avgCani/6Nzeoo
+```
+
+Save the key as `minicrypto-release.pub`.
+
+Verify the signature of the release checksum manifest:
 
 ```bash
-minisign -Sm SHA256SUMS -s /offline/path/minisign.key
+minisign -Vm SHA256SUMS -p minicrypto-release.pub
 ```
 
-This creates `SHA256SUMS.minisig`. Attach it to the draft GitHub Release, then
-publish the release. Never put the private key in the repository, CI secrets, or
-the binary. Publish the corresponding public key and its fingerprint through an
-independent trusted channel.
+Then verify the downloaded artifacts against the checksums listed in `SHA256SUMS`.
 
-Users should verify the manifest signature before trusting any listed hashes:
-
-```bash
-minisign -Vm <file> -P RWQTVmJKWWGaAR24YFh9XPQiwNlIyNf0ZeMsWuzs09avgCani/6Nzeoo
-sha256sum -c SHA256SUMS
-```
-
-On Windows, verify each downloaded package using PowerShell:
-
-```powershell
-Get-FileHash .\MiniCrypto-v1.0.0-windows-x86_64.zip -Algorithm SHA256
-```
-
-Compare its hash with the corresponding entry in the signed `SHA256SUMS`.
-Obtain the minisign public key independently and verify its fingerprint; a
-signature establishes provenance only relative to that trusted key.
+**Security note:** Obtain and verify the public key through a trusted channel independent of the downloaded release artifacts.
 
 ## License
 
