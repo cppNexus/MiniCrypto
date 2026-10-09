@@ -354,13 +354,13 @@ int main(int argc, char** argv) {
                 std::getline(std::cin, resp);
                 if (!resp.empty() && (resp[0] == 'y' || resp[0] == 'Y')) {
                     if (input_is_dir) {
-                        // Recursively shred each file in directory
+                        // Shred all files, then remove empty directory skeleton
                         auto files = collect_files(input);
                         for (const auto& rel : files) {
                             secure_delete(input + "/" + rel);
                         }
-                        // Best-effort remove empty dirs (rmdir doesn't recurse)
-                        std::cout << "Note: Empty directory structure left — remove manually\n";
+                        remove_directory_recursive(input);
+                        std::cout << "Deleted: " << input << "\n";
                     } else {
                         secure_delete(input);
                     }

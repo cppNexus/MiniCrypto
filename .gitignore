@@ -13,6 +13,7 @@ _CPack_Packages/
 *.deb
 *.rpm
 *.dmg
+/.cache*
 
 # OS and Editor files
 .DS_Store

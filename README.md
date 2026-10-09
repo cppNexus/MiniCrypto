@@ -14,15 +14,42 @@
 - **Headerless support** — for steganography and plausible deniability
 - **Air-gap ready** — static builds, deterministic builds, no runtime surprises
 
-##  Encryption Modes
+## Quick Start
+
+```bash
+# Encrypt a file
+minicrypto lock secret.txt
+# -> secret.txt.mcc
+
+# Decrypt a file
+minicrypto unlock secret.txt.mcc
+# -> secret.txt
+
+# Encrypt an entire directory
+minicrypto lock my_project/
+# -> my_project.mcc
+
+# Decrypt a directory archive
+minicrypto unlock my_project.mcc --output my_project/
+# -> my_project/ (full directory tree restored)
+
+# Two-factor: password + keyfile
+minicrypto lock secret.txt --mode split-key --keyfile usb.key
+minicrypto unlock secret.txt.mcc --mode split-key --keyfile usb.key
+```
+
+## Encryption Modes
 
 ### 1. STANDARD (Default)
 ```bash
-# File
+# Encrypt a file
 minicrypto lock secret.txt
 
-# Directory
+# Encrypt an entire directory
 minicrypto lock ~/Documents/project
+
+# Decrypt a directory archive (output path ending with / triggers directory mode)
+minicrypto unlock project.mcc --output ./project/
 ```
 - Password → Argon2id → Key
 - Full header with authenticated parameters
@@ -62,26 +89,38 @@ minicrypto lock backup.tar --deterministic
 - Requires explicit interactive confirmation
 - Specifically for backup deduplication systems
 
-##  Architecture
+## Architecture
 
 ```
 minicrypto/
-├── core/                  # Pure crypto library (no UI)
-│   ├── crypto.cpp/h      # Encryption/decryption engine
-│   ├── dir_ops.cpp/h     # Directory archive & recursive encryption
-│   ├── keygen.cpp/h      # Key derivation modes (Argon2id, BLAKE2b)
-│   ├── format.cpp/h      # File format & header validation
-│   ├── secure_memory.cpp/h # mlock & memory wiping
-│   └── file_ops.cpp/h    # Atomic writes & 3-pass shredding
+├── core/                     # Pure crypto library (no UI dependencies)
+│   ├── crypto.cpp/h          # Encryption/decryption engine
+│   ├── dir_ops.cpp/h         # Directory archive & recursive encryption
+│   ├── keygen.cpp/h          # Key derivation (Argon2id, BLAKE2b/HKDF)
+│   ├── format.cpp/h          # File format constants & header validation
+│   ├── secure_memory.cpp/h   # SecureBuffer/SecureString, mlock
+│   └── file_ops.cpp/h        # AtomicFile, 3-pass secure_delete
 │
-├── ui_cli/               # CLI wrapper
-│   ├── main.cpp          # CLI entry point
-│   └── ui.cpp/h          # Progress bars, terminal prompts
+├── ui_cli/                   # CLI frontend
+│   ├── main.cpp              # Argument parsing & command dispatch
+│   └── ui.cpp/h              # ProgressBar, interactive password prompt
 │
-├── tests/                # Comprehensive test suite
-│   └── test_main.cpp     # Unit & integration tests
+├── tests/
+│   └── test_main.cpp         # 15 unit & integration tests
 │
-└── CMakeLists.txt        # Build system & CPack configuration
+├── docs/
+│   ├── ARCHITECTURE.md       # Detailed design decisions
+│   └── SECURITY.md           # Threat model & security analysis
+│
+├── .github/workflows/
+│   ├── ci.yml                # Cross-platform CI (Linux / macOS / Windows)
+│   └── security-audit.yml    # Static binary & dependency security checks
+│
+├── FAQ.md                    # Common questions & answers
+├── DETERMINISTIC_WARN.txt    # Extended warning for deterministic mode
+├── PROJECT_STRUCTURE.md      # Developer onboarding guide
+├── CMakeLists.txt            # Build system (static/shared/CLI/tests)
+└── LICENSE                   # MIT
 ```
 
 ##  Build Options
@@ -189,3 +228,7 @@ minicrypto test
 # Run full automated test suite (unit + integration)
 ./build/minicrypto_tests
 ```
+
+## License
+
+MIT License — see [LICENSE](LICENSE) file.
