@@ -11,9 +11,17 @@
 #include <algorithm>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <io.h>
 #define portable_fileno _fileno
-#define portable_fsync _commit
+static int portable_fsync(int fd) {
+    const intptr_t native_handle = _get_osfhandle(fd);
+    if (native_handle == -1) return -1;
+    return FlushFileBuffers(reinterpret_cast<HANDLE>(native_handle)) ? 0 : -1;
+}
 #else
 #include <unistd.h>
 #define portable_fileno fileno

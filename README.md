@@ -4,7 +4,7 @@
 
 **Minimalist, paranoid-grade file and directory encryption for air-gapped systems**
 
-##  Design Philosophy
+## Design Philosophy
 
 - **Zero network dependencies** — works completely offline
 - **Zero telemetry** — no metrics, no phone home
@@ -41,6 +41,7 @@ minicrypto unlock secret.txt.mcc --mode split-key --keyfile usb.key
 ## Encryption Modes
 
 ### 1. STANDARD (Default)
+
 ```bash
 # Encrypt a file
 minicrypto lock secret.txt
@@ -54,40 +55,49 @@ minicrypto unlock project.mcc
 # Or choose the destination explicitly
 minicrypto unlock project.mcc --output ./project/
 ```
+
 - Password → Argon2id → Key
 - Full header with authenticated parameters
 - Best for typical use cases
 
 ### 2. SPLIT-KEY
+
 ```bash
 minicrypto lock secret.txt --mode split-key --keyfile usb.key
 ```
+
 - Password + Keyfile → Argon2id → Key
 - Both components required to decrypt
 - Physical + knowledge security (Two-Factor Encryption)
 
 ### 3. KEY-ONLY
+
 ```bash
 minicrypto lock secret.txt --mode key-only --keyfile master.key
 ```
+
 - Keyfile → HKDF-BLAKE2b → Key
 - No password required
 - Pure keyfile authentication
 - Perfect for automated backup pipelines
 
 ### 4. HEADERLESS
+
 ```bash
 minicrypto lock secret.txt --mode headerless
 ```
+
 - Minimal header (salt only, 32 bytes)
 - Deterministic nonce derivation
 - Steganography-friendly
 - Deniable encryption
 
 ### 5. DETERMINISTIC ([WARNING] Dangerous Footgun Mode)
+
 ```bash
 minicrypto lock backup.tar --deterministic
 ```
+
 - Produces identical ciphertext for identical plaintext + password
 - Requires explicit interactive confirmation
 - Specifically for backup deduplication systems
@@ -126,9 +136,10 @@ minicrypto/
 └── LICENSE                   # MIT
 ```
 
-##  Build Options
+## Build Options
 
 ### Standard Build (Dynamic)
+
 ```bash
 mkdir build && cd build
 cmake ..
@@ -137,6 +148,7 @@ sudo make install
 ```
 
 ### Run Tests
+
 ```bash
 mkdir build && cd build
 cmake .. -DBUILD_TESTS=ON
@@ -147,6 +159,7 @@ ctest --output-on-failure
 ```
 
 ### Static Build (Air-gapped Systems)
+
 ```bash
 mkdir build && cd build
 cmake .. -DBUILD_STATIC_CLI=ON
@@ -155,6 +168,7 @@ make
 ```
 
 ### Library Only (No CLI)
+
 ```bash
 cmake .. -DBUILD_CLI=OFF
 make
@@ -162,13 +176,14 @@ sudo make install
 ```
 
 ### Shared Library
+
 ```bash
 cmake .. -DBUILD_SHARED_LIBS=ON
 make
 sudo make install
 ```
 
-##  Library API
+## Library API
 
 ### Example: Encrypting a File
 
@@ -212,7 +227,7 @@ DecryptParams dec_params;
 decrypt_directory("my_folder.mcc", "restored_folder", password, dec_params);
 ```
 
-##  Security Features
+## Security Features
 
 - **Encryption**: XChaCha20-Poly1305 (libsodium secretstream)
 - **KDF**: Argon2id (configurable t/m/p)
@@ -222,7 +237,7 @@ decrypt_directory("my_folder.mcc", "restored_folder", password, dec_params);
 - **Safe I/O**: Atomic writes (`.tmp` write followed by atomic `rename`)
 - **Path Traversal Protection**: Directory unpack checks for `..` and absolute paths
 
-##  Testing
+## Testing
 
 ```bash
 # Run built-in self-tests via CLI
