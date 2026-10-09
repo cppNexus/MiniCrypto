@@ -30,6 +30,26 @@ static bool is_terminal_output() {
 #endif
 }
 
+static bool is_terminal_error() {
+#ifdef _WIN32
+    return (portable_isatty(portable_fileno(stderr)) != 0);
+#else
+    return (isatty(STDERR_FILENO) != 0);
+#endif
+}
+
+std::string colorize(const std::string& text, TerminalColor color, bool stderr_stream) {
+    if (stderr_stream ? !is_terminal_error() : !is_terminal_output()) return text;
+
+    const char* code = "";
+    switch (color) {
+    case TerminalColor::GREEN:  code = "\033[32m"; break;
+    case TerminalColor::RED:    code = "\033[31m"; break;
+    case TerminalColor::YELLOW: code = "\033[33m"; break;
+    }
+    return std::string(code) + text + "\033[0m";
+}
+
 static bool is_terminal_input() {
 #ifdef _WIN32
     return (portable_isatty(portable_fileno(stdin)) != 0);
@@ -38,7 +58,7 @@ static bool is_terminal_input() {
 #endif
 }
 
-ProgressBar::ProgressBar(uint64_t total) 
+ProgressBar::ProgressBar(uint64_t total)
     : total_(total), current_(0), last_percent_(-1) {
     if (total_ > 0 && is_terminal_output()) {
         std::cout << "Progress: 0%" << std::flush;
@@ -47,9 +67,9 @@ ProgressBar::ProgressBar(uint64_t total)
 
 void ProgressBar::update(uint64_t current) {
     current_ = current;
-    
+
     if (total_ == 0 || !is_terminal_output()) return;
-    
+
     int percent = static_cast<int>((current_ * 100) / total_);
     if (percent != last_percent_) {
         std::cout << "\rProgress: " << percent << "%" << std::flush;
@@ -144,7 +164,8 @@ SecureString get_password_interactive(bool confirm) {
 }
 
 void warn(const std::string& msg) {
-    std::cerr << "[WARNING] " << msg << std::endl;
+    std::cerr << colorize("[WARNING]", TerminalColor::YELLOW, true)
+              << " " << msg << std::endl;
 }
 
 } // namespace minicrypto

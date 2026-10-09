@@ -22,6 +22,7 @@ MiniCrypto v2.1 — Secure file & directory encryption
 USAGE:
   minicrypto lock   <file|dir>   Encrypt file or directory
   minicrypto unlock <file>       Decrypt file (or directory archive)
+    minicrypto verify <file>        Verify encrypted file integrity
   minicrypto info   <file>       Show encrypted-file metadata
   minicrypto test                Run built-in self-tests
 
@@ -56,6 +57,9 @@ EXAMPLES:
 
   # Decrypt a directory archive back to a folder
   minicrypto unlock project.mcc --output ./project_restored
+
+    # Verify an encrypted backup without keeping decrypted output
+    minicrypto verify backup.mcc
 
   # Split-key mode (password + keyfile)
   minicrypto lock secret.txt --mode split-key --keyfile ~/usb.key
@@ -152,11 +156,21 @@ static bool deterministic_confirmation() {
     std::getline(std::cin, response);
 
     if (response == "I UNDERSTAND THE RISKS") {
-        std::cerr << "\n[OK] Proceeding with deterministic mode (NOT RECOMMENDED)\n\n";
+        std::cerr << "\n" << colorize("[OK]", TerminalColor::GREEN, true)
+              << " Proceeding with deterministic mode (NOT RECOMMENDED)\n\n";
         return true;
     }
-    std::cerr << "\n[ABORT] Aborting. Use default mode for better security.\n";
+    std::cerr << "\n" << colorize("[ABORT]", TerminalColor::RED, true)
+              << " Aborting. Use default mode for better security.\n";
     return false;
+}
+
+static std::string make_verify_temp_path(const std::string& input) {
+    unsigned char random_suffix[16];
+    char suffix_hex[33];
+    randombytes_buf(random_suffix, sizeof(random_suffix));
+    sodium_bin2hex(suffix_hex, sizeof(suffix_hex), random_suffix, sizeof(random_suffix));
+    return input + ".verify_tmp." + suffix_hex;
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -261,15 +275,50 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // ── verify encrypted file integrity ───────────────────────────────────
+        if (cmd == "verify") {
+            SecureString password;
+            if (enc_mode != EncryptionMode::KEY_ONLY) {
+                password = get_password_interactive(/*confirm=*/false);
+            }
+
+            DecryptParams params;
+            params.mode          = enc_mode;
+            params.argon_time    = argon_t;
+            params.argon_mem_kb  = argon_m;
+            params.argon_threads = argon_p;
+            params.keyfile       = keyfile_data.empty() ? nullptr : &keyfile_data;
+
+            const std::string temp_decrypt = make_verify_temp_path(input);
+            try {
+                // Decrypting the complete stream verifies every authentication tag.
+                decrypt_file(input, temp_decrypt, password, params);
+                secure_delete(temp_decrypt);
+            } catch (...) {
+                secure_delete(temp_decrypt);
+                throw;
+            }
+
+            std::cout << colorize("[OK]", TerminalColor::GREEN)
+                      << " Integrity verified: " << input << "\n";
+            return 0;
+        }
+
         // ── lock (encrypt) ────────────────────────────────────────────────────
         if (cmd == "lock") {
             const bool input_is_dir = is_directory(input);
+            const bool output_was_specified = !output.empty();
 
             if (output.empty()) {
                 // Strip trailing slash for directories
                 std::string base = input;
                 while (!base.empty() && base.back() == '/') base.pop_back();
                 output = base + ".mcc";
+            }
+
+            if (input_is_dir && !output_was_specified) {
+                warn("default archive path is next to the source directory: " + output
+                    + "; use --output to choose another location");
             }
 
             std::cout << "Input    : " << input
@@ -350,9 +399,10 @@ int main(int argc, char** argv) {
                 dp.keyfile      = params.keyfile;
 
                 if (verify_encryption(input, output, password, dp)) {
-                    std::cout << "[OK]\n";
+                    std::cout << colorize("[OK]", TerminalColor::GREEN) << "\n";
                 } else {
-                    std::cerr << "[FAIL] Verification FAILED\n";
+                    std::cerr << colorize("[FAIL]", TerminalColor::RED)
+                              << " Verification FAILED\n";
                     return 4;
                 }
             }
@@ -360,7 +410,8 @@ int main(int argc, char** argv) {
             std::cout << "Encrypted: " << output << "\n";
 
             if (deterministic) {
-                std::cerr << "\n[WARNING] File encrypted in DETERMINISTIC mode\n";
+                std::cerr << "\n" << colorize("[WARNING]", TerminalColor::YELLOW, true)
+                          << " File encrypted in DETERMINISTIC mode\n";
                 std::cerr << "    Re-encrypting the same file will produce IDENTICAL ciphertext\n";
             }
 

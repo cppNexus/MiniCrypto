@@ -9,6 +9,7 @@
 #include <vector>
 #include <iostream>
 #include <algorithm>
+#include <string>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -17,6 +18,7 @@
 #include <windows.h>
 #include <io.h>
 #define portable_fileno _fileno
+#define portable_isatty _isatty
 static int portable_fsync(int fd) {
     const intptr_t native_handle = _get_osfhandle(fd);
     if (native_handle == -1) return -1;
@@ -25,10 +27,16 @@ static int portable_fsync(int fd) {
 #else
 #include <unistd.h>
 #define portable_fileno fileno
+#define portable_isatty isatty
 #define portable_fsync fsync
 #endif
 
 namespace minicrypto {
+
+static std::string colorize_status(const char* text, const char* color) {
+    if (portable_isatty(portable_fileno(stdout)) == 0) return text;
+    return std::string(color) + text + "\033[0m";
+}
 
 // ── AtomicFile ────────────────────────────────────────────────────────────────
 
@@ -121,9 +129,10 @@ void secure_delete(const std::string& path) {
 
     std::error_code ec;
     if (std::filesystem::remove(path, ec)) {
-        std::cout << "[OK]\n";
+        std::cout << colorize_status("[OK]", "\033[32m") << "\n";
     } else {
-        std::cout << "[WARNING] (couldn't unlink)\n";
+        std::cout << colorize_status("[WARNING]", "\033[33m")
+                  << " (couldn't unlink)\n";
     }
 
     std::cout << "Note: secure_delete is best-effort "

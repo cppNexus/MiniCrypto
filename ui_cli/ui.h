@@ -7,12 +7,21 @@
 
 namespace minicrypto {
 
+enum class TerminalColor {
+    GREEN,
+    RED,
+    YELLOW
+};
+
+/// Apply ANSI color only when the selected output stream is a terminal.
+std::string colorize(const std::string& text, TerminalColor color, bool stderr_stream = false);
+
 // Progress bar for encryption/decryption
 class ProgressBar {
     uint64_t total_;
     uint64_t current_;
     int last_percent_;
-    
+
 public:
     explicit ProgressBar(uint64_t total);
     void update(uint64_t current);

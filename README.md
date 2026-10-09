@@ -25,9 +25,13 @@ minicrypto lock secret.txt
 minicrypto unlock secret.txt.mcc
 # -> secret.txt
 
+# Verify an encrypted backup without restoring it
+minicrypto verify secret.txt.mcc
+
 # Encrypt an entire directory
 minicrypto lock my_project/
 # -> my_project.mcc
+# The default archive is next to the source directory; use --output to relocate it.
 
 # Decrypt a directory archive
 minicrypto unlock my_project.mcc
@@ -59,6 +63,9 @@ minicrypto unlock project.mcc --output ./project/
 - Password → Argon2id → Key
 - Full header with authenticated parameters
 - Best for typical use cases
+
+`verify` authenticates the complete encrypted stream without re-encrypting it.
+It temporarily decrypts to a file and securely deletes that temporary plaintext.
 
 ### 2. SPLIT-KEY
 
