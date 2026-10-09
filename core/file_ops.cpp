@@ -40,13 +40,14 @@ static std::string colorize_status(const char* text, const char* color) {
 
 // ── AtomicFile ────────────────────────────────────────────────────────────────
 
-AtomicFile::AtomicFile(const std::string& path)
-    : final_path_(path), temp_path_(path + ".tmp"), committed_(false)
+AtomicFile::AtomicFile(const std::filesystem::path& path)
+    : final_path_(path), temp_path_(path), committed_(false)
 {
+    temp_path_ += ".tmp";
     stream_.open(temp_path_, std::ios::binary);
     if (!stream_) {
         throw CryptoException(ErrorCode::PERMISSION_DENIED,
-            "cannot create temp file: " + temp_path_);
+            "cannot create temp file: " + temp_path_.u8string());
     }
 }
 
@@ -73,7 +74,7 @@ void AtomicFile::commit() {
         std::filesystem::rename(temp_path_, final_path_, ec);
         if (ec) {
             throw CryptoException(ErrorCode::PERMISSION_DENIED,
-                "cannot finalize file: " + final_path_ + " (" + ec.message() + ")");
+                "cannot finalize file: " + final_path_.u8string() + " (" + ec.message() + ")");
         }
     }
 
@@ -82,7 +83,7 @@ void AtomicFile::commit() {
 
 // ── secure_delete ─────────────────────────────────────────────────────────────
 
-void secure_delete(const std::string& path) {
+void secure_delete(const std::filesystem::path& path) {
     std::ifstream test(path, std::ios::binary);
     if (!test) return;
 
@@ -90,11 +91,15 @@ void secure_delete(const std::string& path) {
     size_t fsize = static_cast<size_t>(test.tellg());
     test.close();
 
-    std::cout << "Shredding " << path << "... " << std::flush;
+    std::cout << "Shredding " << path.u8string() << "... " << std::flush;
 
+#ifdef _WIN32
+    FILE* fp = _wfopen(path.c_str(), L"r+b");
+#else
     FILE* fp = std::fopen(path.c_str(), "r+b");
+#endif
     if (!fp) {
-        core_warn("secure_delete: cannot open file for shredding: " + path);
+        core_warn("secure_delete: cannot open file for shredding: " + path.u8string());
         return;
     }
 

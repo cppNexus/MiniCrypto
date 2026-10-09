@@ -591,6 +591,53 @@ void test_archive_path_length_limit() {
     remove_rf(unpack_dir);
 }
 
+void test_unicode_filesystem_paths() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::u8path(u8"test_\u0434\u0430\u043D\u043D\u044B\u0435_\u8DEF\u5F84");
+    const fs::path archive = fs::u8path(u8"test_\u0430\u0440\u0445\u0438\u0432.mcda");
+    const fs::path restored = fs::u8path(u8"test_\u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E");
+    const fs::path filename = fs::u8path(u8"\u0444\u0430\u0439\u043B.txt");
+    const fs::path encrypted = fs::u8path(u8"test_\u0448\u0438\u0444\u0440.mc");
+    const fs::path decrypted = fs::u8path(u8"test_\u0440\u0430\u0441\u0448\u0438\u0444\u0440.txt");
+    const fs::path source = root / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430") / filename;
+
+    fs::create_directories(root / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430"));
+    {
+        std::ofstream out(source, std::ios::binary);
+        out << "Unicode path roundtrip";
+    }
+
+    SecureString password("unicode_path_password", 21);
+    EncryptParams encrypt_params;
+    encrypt_params.argon_time = 1;
+    encrypt_params.argon_mem_kb = 8192;
+    encrypt_params.argon_threads = 1;
+    DecryptParams decrypt_params;
+    encrypt_file(source, encrypted, password, encrypt_params);
+    decrypt_file(encrypted, decrypted, password, decrypt_params);
+
+    std::ifstream decrypted_file(decrypted, std::ios::binary);
+    std::string decrypted_contents((std::istreambuf_iterator<char>(decrypted_file)),
+        std::istreambuf_iterator<char>());
+    TEST_ASSERT(decrypted_contents == "Unicode path roundtrip", "Unicode file API paths roundtrip");
+
+    pack_directory(root, archive);
+    unpack_directory(archive, restored);
+
+    std::ifstream restored_file(
+        restored / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430") / filename,
+        std::ios::binary);
+    std::string contents((std::istreambuf_iterator<char>(restored_file)),
+        std::istreambuf_iterator<char>());
+    TEST_ASSERT(contents == "Unicode path roundtrip", "Unicode archive paths roundtrip");
+
+    fs::remove_all(root);
+    fs::remove_all(restored);
+    fs::remove(archive);
+    fs::remove(encrypted);
+    fs::remove(decrypted);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -618,6 +665,7 @@ int main() {
     RUN_TEST(test_directory_encryption_roundtrip);
     RUN_TEST(test_path_traversal_prevention);
     RUN_TEST(test_archive_path_length_limit);
+    RUN_TEST(test_unicode_filesystem_paths);
     RUN_TEST(test_atomic_file);
 
     std::cout << "========================================\n";

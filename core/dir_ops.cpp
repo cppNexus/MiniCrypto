@@ -19,23 +19,23 @@ static constexpr std::size_t COPY_BUFFER_SIZE = 64 * 1024;
 
 // ── Filesystem helpers ────────────────────────────────────────────────────────
 
-bool is_directory(const std::string& path) {
+bool is_directory(const fs::path& path) {
     std::error_code ec;
     return fs::is_directory(path, ec);
 }
 
-bool is_regular_file(const std::string& path) {
+bool is_regular_file(const fs::path& path) {
     std::error_code ec;
     return fs::is_regular_file(path, ec);
 }
 
-std::vector<std::string> collect_files(const std::string& dir_path) {
-    std::vector<std::string> result;
+std::vector<fs::path> collect_files(const fs::path& dir_path) {
+    std::vector<fs::path> result;
     std::error_code ec;
 
     if (!fs::is_directory(dir_path, ec)) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "directory not found: " + dir_path);
+            "directory not found: " + dir_path.u8string());
     }
 
     fs::path base(dir_path);
@@ -43,16 +43,18 @@ std::vector<std::string> collect_files(const std::string& dir_path) {
         if (entry.is_regular_file(ec)) {
             // Compute relative path
             fs::path rel = fs::relative(entry.path(), base, ec);
-            result.push_back(rel.generic_string());
+            result.push_back(rel);
         }
     }
 
     // Sort paths for reproducible archive ordering
-    std::sort(result.begin(), result.end());
+    std::sort(result.begin(), result.end(), [](const fs::path& left, const fs::path& right) {
+        return left.generic_u8string() < right.generic_u8string();
+    });
     return result;
 }
 
-void remove_directory_recursive(const std::string& path) {
+void remove_directory_recursive(const fs::path& path) {
     std::error_code ec;
     fs::remove_all(path, ec);
 }
@@ -112,25 +114,25 @@ static uint64_t read_u64_le(std::ifstream& f) {
 // ── Pack / Unpack ─────────────────────────────────────────────────────────────
 
 void pack_directory(
-    const std::string& dir_path,
-    const std::string& archive_path,
+    const fs::path& dir_path,
+    const fs::path& archive_path,
     std::function<void(uint64_t)> progress)
 {
-    if (!is_directory(dir_path)) {
+    if (!minicrypto::is_directory(dir_path)) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "not a directory: " + dir_path);
+            "not a directory: " + dir_path.u8string());
     }
 
-    std::vector<std::string> files = collect_files(dir_path);
+    std::vector<fs::path> files = collect_files(dir_path);
     fs::path base(dir_path);
 
     // Build set of directories auto-created as parent paths of file entries
     std::set<std::string> file_parent_dirs;
     for (const auto& f : files) {
         for (fs::path cur = fs::path(f).parent_path();
-             !cur.empty() && cur.generic_string() != ".";
+               !cur.empty() && cur != fs::path(".");
              cur = cur.parent_path()) {
-            file_parent_dirs.insert(cur.generic_string());
+            file_parent_dirs.insert(cur.generic_u8string());
         }
     }
 
@@ -141,7 +143,7 @@ void pack_directory(
         for (const auto& entry : fs::recursive_directory_iterator(base, ec)) {
             if (!entry.is_directory(ec)) continue;
             fs::path rel = fs::relative(entry.path(), base, ec);
-            std::string rel_str = rel.generic_string();
+            std::string rel_str = rel.generic_u8string();
             if (file_parent_dirs.find(rel_str) == file_parent_dirs.end()) {
                 empty_dir_entries.push_back(rel_str + "/");
             }
@@ -152,7 +154,7 @@ void pack_directory(
     std::ofstream out(archive_path, std::ios::binary);
     if (!out) {
         throw CryptoException(ErrorCode::PERMISSION_DENIED,
-            "cannot create archive: " + archive_path);
+            "cannot create archive: " + archive_path.u8string());
     }
 
     // Write header (v2: supports explicit directory entries)
@@ -180,17 +182,18 @@ void pack_directory(
     // Write file entries
     for (const auto& rel : files) {
         fs::path full_path = base / rel;
+        const std::string rel_utf8 = rel.generic_u8string();
 
-        if (rel.size() > ARCHIVE_MAX_PATH_LEN) {
+        if (rel_utf8.size() > ARCHIVE_MAX_PATH_LEN) {
             throw CryptoException(ErrorCode::IO_ERROR,
-            "path too long (>4096): " + rel);
+                "path too long (>4096): " + rel_utf8);
         }
-        uint16_t path_len = static_cast<uint16_t>(rel.size());
+        uint16_t path_len = static_cast<uint16_t>(rel_utf8.size());
 
         std::ifstream src(full_path, std::ios::binary);
         if (!src) {
             throw CryptoException(ErrorCode::IO_ERROR,
-                "cannot read file: " + full_path.string());
+                "cannot read file: " + full_path.u8string());
         }
 
         src.seekg(0, std::ios::end);
@@ -199,7 +202,7 @@ void pack_directory(
 
         // Entry header
         write_u16_le(out, path_len);
-        out.write(rel.data(), path_len);
+        out.write(rel_utf8.data(), path_len);
         if (!out) throw CryptoException(ErrorCode::IO_ERROR, "archive write error (path)");
         write_u64_le(out, file_size);
 
@@ -213,7 +216,7 @@ void pack_directory(
             std::streamsize got = src.gcount();
             if (got <= 0) {
                 throw CryptoException(ErrorCode::IO_ERROR,
-                    "unexpected EOF reading: " + full_path.string());
+                    "unexpected EOF reading: " + full_path.u8string());
             }
             out.write(copy_buf.data(), got);
             if (!out) throw CryptoException(ErrorCode::IO_ERROR, "archive write error (data)");
@@ -231,14 +234,14 @@ void pack_directory(
 }
 
 void unpack_directory(
-    const std::string& archive_path,
-    const std::string& out_dir,
+    const fs::path& archive_path,
+    const fs::path& out_dir,
     std::function<void(uint64_t)> progress)
 {
     std::ifstream in(archive_path, std::ios::binary);
     if (!in) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "archive not found: " + archive_path);
+            "archive not found: " + archive_path.u8string());
     }
 
     uint32_t magic   = read_u32_le(in);
@@ -258,7 +261,7 @@ void unpack_directory(
     fs::create_directories(target_base, ec);
     if (ec) {
         throw CryptoException(ErrorCode::PERMISSION_DENIED,
-            "cannot create directory: " + out_dir + " (" + ec.message() + ")");
+            "cannot create directory: " + out_dir.u8string() + " (" + ec.message() + ")");
     }
 
     std::vector<char> copy_buf(COPY_BUFFER_SIZE);
@@ -299,28 +302,28 @@ void unpack_directory(
                 throw CryptoException(ErrorCode::CORRUPTED_FILE,
                     "directory entry has non-zero size: " + rel);
             }
-            fs::path full_dest = target_base / rel_path;
+            fs::path full_dest = target_base / fs::u8path(rel_path);
             fs::create_directories(full_dest, ec);
             if (ec) {
                 throw CryptoException(ErrorCode::PERMISSION_DENIED,
-                    "cannot create directory: " + full_dest.string());
+                    "cannot create directory: " + full_dest.u8string());
             }
             if (progress) progress(bytes_read);
             continue;
         }
 
         // Handle file entry
-        fs::path full_dest = target_base / rel_path;
+        fs::path full_dest = target_base / fs::u8path(rel_path);
         fs::create_directories(full_dest.parent_path(), ec);
         if (ec) {
             throw CryptoException(ErrorCode::PERMISSION_DENIED,
-                "cannot create directory: " + full_dest.parent_path().string());
+            "cannot create directory: " + full_dest.parent_path().u8string());
         }
 
         std::ofstream out_file(full_dest, std::ios::binary);
         if (!out_file) {
             throw CryptoException(ErrorCode::PERMISSION_DENIED,
-                "cannot create file: " + full_dest.string());
+                "cannot create file: " + full_dest.u8string());
         }
 
         uint64_t remaining = file_size;
@@ -335,7 +338,7 @@ void unpack_directory(
             out_file.write(copy_buf.data(), got);
             if (!out_file) {
                 throw CryptoException(ErrorCode::IO_ERROR,
-                    "write error: " + full_dest.string());
+                    "write error: " + full_dest.u8string());
             }
 
             remaining -= static_cast<uint64_t>(got);
@@ -349,12 +352,13 @@ void unpack_directory(
 // ── High-level wrappers ───────────────────────────────────────────────────────
 
 void encrypt_directory(
-    const std::string& dir_path,
-    const std::string& output_path,
+    const fs::path& dir_path,
+    const fs::path& output_path,
     const SecureString& password,
     const EncryptParams& params)
 {
-    std::string tmp_archive = output_path + ".archive_tmp";
+    fs::path tmp_archive = output_path;
+    tmp_archive += ".archive_tmp";
 
     try {
         pack_directory(dir_path, tmp_archive, params.progress_callback);
@@ -367,12 +371,13 @@ void encrypt_directory(
 }
 
 void decrypt_directory(
-    const std::string& input_path,
-    const std::string& out_dir,
+    const fs::path& input_path,
+    const fs::path& out_dir,
     const SecureString& password,
     const DecryptParams& params)
 {
-    std::string tmp_archive = input_path + ".archive_tmp";
+    fs::path tmp_archive = input_path;
+    tmp_archive += ".archive_tmp";
 
     try {
         decrypt_file(input_path, tmp_archive, password, params);

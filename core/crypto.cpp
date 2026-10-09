@@ -11,7 +11,7 @@
 
 namespace minicrypto {
 
-static void remove_temp_file(const std::string& path) {
+static void remove_temp_file(const std::filesystem::path& path) {
     std::error_code ec;
     std::filesystem::remove(path, ec);
 }
@@ -42,11 +42,11 @@ static void must_write(std::ofstream& fo, const void* buf, size_t len,
 }
 
 /// Compute SHA-256 of a file.
-static void sha256_file(const std::string& path, unsigned char* hash_out) {
+static void sha256_file(const std::filesystem::path& path, unsigned char* hash_out) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "cannot open file for hashing: " + path);
+            "cannot open file for hashing: " + path.u8string());
     }
 
     crypto_hash_sha256_state state;
@@ -69,8 +69,8 @@ static void sha256_file(const std::string& path, unsigned char* hash_out) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void encrypt_file(
-    const std::string& input_path,
-    const std::string& output_path,
+    const std::filesystem::path& input_path,
+    const std::filesystem::path& output_path,
     const SecureString& password,
     const EncryptParams& params)
 {
@@ -96,7 +96,7 @@ void encrypt_file(
     std::ifstream fi(input_path, std::ios::binary);
     if (!fi) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "input file not found: " + input_path);
+            "input file not found: " + input_path.u8string());
     }
 
     fi.seekg(0, std::ios::end);
@@ -214,15 +214,15 @@ void encrypt_file(
 }
 
 void decrypt_file(
-    const std::string& input_path,
-    const std::string& output_path,
+    const std::filesystem::path& input_path,
+    const std::filesystem::path& output_path,
     const SecureString& password,
     const DecryptParams& params)
 {
     std::ifstream fi(input_path, std::ios::binary);
     if (!fi) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "input file not found: " + input_path);
+            "input file not found: " + input_path.u8string());
     }
 
     const bool headerless = (params.mode == EncryptionMode::HEADERLESS);
@@ -332,12 +332,13 @@ void decrypt_file(
 }
 
 bool verify_encryption(
-    const std::string& original_path,
-    const std::string& encrypted_path,
+    const std::filesystem::path& original_path,
+    const std::filesystem::path& encrypted_path,
     const SecureString& password,
     const DecryptParams& params)
 {
-    std::string temp_decrypt = encrypted_path + ".verify_tmp";
+    std::filesystem::path temp_decrypt = encrypted_path;
+    temp_decrypt += ".verify_tmp";
 
     try {
         DecryptParams vp = params;
@@ -385,11 +386,11 @@ bool verify_encryption(
     }
 }
 
-FileMetadata read_metadata(const std::string& path) {
+FileMetadata read_metadata(const std::filesystem::path& path) {
     std::ifstream fi(path, std::ios::binary);
     if (!fi) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-            "file not found: " + path);
+            "file not found: " + path.u8string());
     }
 
     Header h{};

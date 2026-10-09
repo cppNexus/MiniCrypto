@@ -192,6 +192,10 @@ sudo make install
 
 ## Library API
 
+Filesystem APIs accept `std::filesystem::path`. To pass UTF-8 path text portably
+(including on Windows), construct paths with `std::filesystem::u8path(u8"...")`;
+Windows callers may also pass paths constructed from native wide strings.
+
 ### Example: Encrypting a File
 
 ```cpp

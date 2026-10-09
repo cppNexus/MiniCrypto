@@ -10,6 +10,12 @@
 #include <fstream>
 #include <filesystem>
 #include <limits>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace minicrypto;
 
@@ -86,7 +92,7 @@ SECURITY:
 
 // ── Info ──────────────────────────────────────────────────────────────────────
 
-static void show_info(const std::string& path) {
+static void show_info(const std::filesystem::path& path) {
     try {
         FileMetadata meta = read_metadata(path);
 
@@ -165,17 +171,28 @@ static bool deterministic_confirmation() {
     return false;
 }
 
-static std::string make_verify_temp_path(const std::string& input) {
+static std::filesystem::path make_verify_temp_path(const std::filesystem::path& input) {
     unsigned char random_suffix[16];
     char suffix_hex[33];
     randombytes_buf(random_suffix, sizeof(random_suffix));
     sodium_bin2hex(suffix_hex, sizeof(suffix_hex), random_suffix, sizeof(random_suffix));
-    return input + ".verify_tmp." + suffix_hex;
+    std::filesystem::path temp = input;
+    temp += ".verify_tmp.";
+    temp += suffix_hex;
+    return temp;
+}
+
+static std::filesystem::path path_from_cli_arg(const std::string& value) {
+#ifdef _WIN32
+    return std::filesystem::u8path(value);
+#else
+    return std::filesystem::path(value);
+#endif
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-int main(int argc, char** argv) {
+static int run_cli(int argc, char** argv) {
     if (sodium_init() < 0) {
         std::cerr << "Fatal: libsodium initialization failed\n";
         return 99;
@@ -206,7 +223,7 @@ int main(int argc, char** argv) {
         }
 
         // ── Parse options ─────────────────────────────────────────────────────
-        std::string input, output, keyfile_path;
+        std::filesystem::path input, output, keyfile_path;
         std::string enc_mode_str = "standard";
         bool keep_original = false;
         bool do_verify     = true;
@@ -218,8 +235,8 @@ int main(int argc, char** argv) {
         for (int i = 2; i < argc; ++i) {
             std::string arg = argv[i];
 
-            if      ((arg == "--output" || arg == "-o")  && i+1 < argc) { output       = argv[++i]; }
-            else if (arg == "--keyfile"                  && i+1 < argc) { keyfile_path = argv[++i]; }
+            if      ((arg == "--output" || arg == "-o")  && i+1 < argc) { output       = path_from_cli_arg(argv[++i]); }
+            else if (arg == "--keyfile"                  && i+1 < argc) { keyfile_path = path_from_cli_arg(argv[++i]); }
             else if ((arg == "--mode"   || arg == "-m")  && i+1 < argc) { enc_mode_str = argv[++i]; }
             else if (arg == "--keep"    || arg == "-k")                 { keep_original = true;      }
             else if (arg == "--no-verify")                              { do_verify    = false;      }
@@ -227,7 +244,7 @@ int main(int argc, char** argv) {
             else if (arg == "--argon-time"               && i+1 < argc) { argon_t = static_cast<uint32_t>(std::stoul(argv[++i])); }
             else if (arg == "--argon-mem"                && i+1 < argc) { argon_m = static_cast<uint32_t>(std::stoul(argv[++i])) * 1024; }
             else if (arg == "--argon-threads"            && i+1 < argc) { argon_p = static_cast<uint32_t>(std::stoul(argv[++i])); }
-            else if (arg[0] != '-')                                     { input = arg;              }
+            else if (arg[0] != '-')                                     { input = path_from_cli_arg(arg); }
         }
 
         if (input.empty()) {
@@ -252,11 +269,11 @@ int main(int argc, char** argv) {
             std::ifstream kf(keyfile_path, std::ios::binary);
             if (!kf) {
                 throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-                    "keyfile not found: " + keyfile_path);
+                    "keyfile not found: " + keyfile_path.u8string());
             }
             keyfile_data.assign(std::istreambuf_iterator<char>(kf),
                                 std::istreambuf_iterator<char>());
-            std::cout << "Using keyfile: " << keyfile_path << "\n";
+            std::cout << "Using keyfile: " << keyfile_path.u8string() << "\n";
         }
 
         // ── Validate mode + keyfile ───────────────────────────────────────────
@@ -289,7 +306,7 @@ int main(int argc, char** argv) {
             params.argon_threads = argon_p;
             params.keyfile       = keyfile_data.empty() ? nullptr : &keyfile_data;
 
-            const std::string temp_decrypt = make_verify_temp_path(input);
+            const std::filesystem::path temp_decrypt = make_verify_temp_path(input);
             try {
                 // Decrypting the complete stream verifies every authentication tag.
                 decrypt_file(input, temp_decrypt, password, params);
@@ -300,30 +317,33 @@ int main(int argc, char** argv) {
             }
 
             std::cout << colorize("[OK]", TerminalColor::GREEN)
-                      << " Integrity verified: " << input << "\n";
+                      << " Integrity verified: " << input.u8string() << "\n";
             return 0;
         }
 
         // ── lock (encrypt) ────────────────────────────────────────────────────
         if (cmd == "lock") {
-            const bool input_is_dir = is_directory(input);
+            const bool input_is_dir = minicrypto::is_directory(input);
             const bool output_was_specified = !output.empty();
 
             if (output.empty()) {
                 // Strip trailing slash for directories
-                std::string base = input;
-                while (!base.empty() && base.back() == '/') base.pop_back();
-                output = base + ".mcc";
+                std::filesystem::path base = input;
+                while (base != base.root_path() && base.filename().empty()) {
+                    base = base.parent_path();
+                }
+                output = base;
+                output += ".mcc";
             }
 
             if (input_is_dir && !output_was_specified) {
-                warn("default archive path is next to the source directory: " + output
+                warn("default archive path is next to the source directory: " + output.u8string()
                     + "; use --output to choose another location");
             }
 
-            std::cout << "Input    : " << input
+            std::cout << "Input    : " << input.u8string()
                       << (input_is_dir ? " (directory)" : " (file)") << "\n";
-            std::cout << "Output   : " << output << "\n";
+            std::cout << "Output   : " << output.u8string() << "\n";
             std::cout << "Mode     : " << enc_mode_str;
             if (deterministic) std::cout << " (DETERMINISTIC)";
             std::cout << "\n";
@@ -359,12 +379,12 @@ int main(int argc, char** argv) {
                     const uintmax_t file_size = std::filesystem::file_size(base / rel, ec);
                     if (ec) {
                         throw CryptoException(ErrorCode::IO_ERROR,
-                            "cannot determine file size: " + (base / rel).string()
+                            "cannot determine file size: " + (base / rel).u8string()
                             + " (" + ec.message() + ")");
                     }
                     if (file_size > std::numeric_limits<uint64_t>::max() - total_size) {
                         throw CryptoException(ErrorCode::IO_ERROR,
-                            "total directory size exceeds supported range: " + input);
+                            "total directory size exceeds supported range: " + input.u8string());
                     }
                     total_size += static_cast<uint64_t>(file_size);
                 }
@@ -417,7 +437,7 @@ int main(int argc, char** argv) {
 
             // Optional deletion
             if (keep_original) {
-                std::cout << "Original kept: " << input << "\n";
+                std::cout << "Original kept: " << input.u8string() << "\n";
             } else {
                 std::cout << "Delete original securely? [y/N] " << std::flush;
                 std::string resp;
@@ -427,15 +447,15 @@ int main(int argc, char** argv) {
                         // Shred all files, then remove empty directory skeleton
                         auto files = collect_files(input);
                         for (const auto& rel : files) {
-                            secure_delete(input + "/" + rel);
+                            secure_delete(input / rel);
                         }
                         remove_directory_recursive(input);
-                        std::cout << "Deleted: " << input << "\n";
+                        std::cout << "Deleted: " << input.u8string() << "\n";
                     } else {
                         secure_delete(input);
                     }
                 } else {
-                    std::cout << "Original kept: " << input << "\n";
+                    std::cout << "Original kept: " << input.u8string() << "\n";
                 }
             }
 
@@ -448,15 +468,16 @@ int main(int argc, char** argv) {
             if (output.empty()) {
                 // Default output: strip .mcc suffix, otherwise append .decrypted
                 output = input;
-                if (output.size() > 4 &&
-                    output.substr(output.size() - 4) == ".mcc") {
-                    output = output.substr(0, output.size() - 4);
+                if (output.extension().u8string() == ".mcc") {
+                    output.replace_extension();
                 } else {
                     output += ".decrypted";
                 }
             }
             // Normalise output path by removing a trailing slash.
-            while (output.size() > 1 && output.back() == '/') output.pop_back();
+            if (output != output.root_path() && output.filename().empty()) {
+                output = output.parent_path();
+            }
 
             // Get password
             SecureString password;
@@ -478,7 +499,8 @@ int main(int argc, char** argv) {
             };
 
             // Step 1: decrypt into a temporary file
-            std::string tmp_dec = input + ".dec_tmp";
+            std::filesystem::path tmp_dec = input;
+            tmp_dec += ".dec_tmp";
             try {
                 decrypt_file(input, tmp_dec, password, params);
                 progress.finish();
@@ -509,7 +531,7 @@ int main(int argc, char** argv) {
                     unpack_directory(tmp_dec, output);
                     std::error_code ec;
                     std::filesystem::remove(tmp_dec, ec);
-                    std::cout << "Decrypted directory: " << output << "\n";
+                    std::cout << "Decrypted directory: " << output.u8string() << "\n";
                 } else {
                     // Step 3b: plain file — rename temp to final output
                     std::error_code ec;
@@ -520,9 +542,9 @@ int main(int argc, char** argv) {
                             std::filesystem::copy_options::overwrite_existing, ec);
                         std::filesystem::remove(tmp_dec, ec);
                         if (ec) throw CryptoException(ErrorCode::IO_ERROR,
-                            "cannot write output: " + output);
+                            "cannot write output: " + output.u8string());
                     }
-                    std::cout << "Decrypted: " << output << "\n";
+                    std::cout << "Decrypted: " << output.u8string() << "\n";
                 }
             } catch (...) {
                 std::error_code ec;
@@ -573,3 +595,37 @@ int main(int argc, char** argv) {
 
     return 0;
 }
+
+#ifdef _WIN32
+static bool wide_to_utf8(const wchar_t* value, std::string& result) {
+    const int required = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, value, -1, nullptr, 0, nullptr, nullptr);
+    if (required <= 0) return false;
+
+    result.resize(static_cast<size_t>(required));
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, -1,
+            result.data(), required, nullptr, nullptr) <= 0) {
+        return false;
+    }
+    result.pop_back();
+    return true;
+}
+
+int wmain(int argc, wchar_t** argv) {
+    std::vector<std::string> utf8_args(static_cast<size_t>(argc));
+    std::vector<char*> narrow_argv;
+    narrow_argv.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        if (!wide_to_utf8(argv[i], utf8_args[static_cast<size_t>(i)])) {
+            std::cerr << "Failed to convert command-line argument to UTF-8\n";
+            return 99;
+        }
+    }
+    for (auto& arg : utf8_args) narrow_argv.push_back(arg.data());
+    return run_cli(argc, narrow_argv.data());
+}
+#else
+int main(int argc, char** argv) {
+    return run_cli(argc, argv);
+}
+#endif

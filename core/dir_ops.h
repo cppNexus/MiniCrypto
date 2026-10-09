@@ -2,6 +2,7 @@
 #define MINICRYPTO_DIR_OPS_H
 
 #include "crypto.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <functional>
@@ -36,16 +37,16 @@ constexpr uint16_t ARCHIVE_MAX_PATH_LEN = 4096;
 /// written to `archive_path`. Directory entries have a trailing '/' and size 0.
 /// Calls `progress` with (bytes_written) whenever a chunk is flushed; may be nullptr.
 void pack_directory(
-    const std::string& dir_path,
-    const std::string& archive_path,
+    const std::filesystem::path& dir_path,
+    const std::filesystem::path& archive_path,
     std::function<void(uint64_t)> progress = nullptr
 );
 
 /// Unpack an archive produced by pack_directory into `out_dir`.
 /// `out_dir` is created if it does not exist.
 void unpack_directory(
-    const std::string& archive_path,
-    const std::string& out_dir,
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& out_dir,
     std::function<void(uint64_t)> progress = nullptr
 );
 
@@ -53,31 +54,31 @@ void unpack_directory(
 
 /// Encrypt an entire directory: pack → encrypt (single .mcc file).
 void encrypt_directory(
-    const std::string& dir_path,
-    const std::string& output_path,
+    const std::filesystem::path& dir_path,
+    const std::filesystem::path& output_path,
     const SecureString& password,
     const EncryptParams& params
 );
 
 /// Decrypt a directory archive: decrypt → unpack.
 void decrypt_directory(
-    const std::string& input_path,
-    const std::string& out_dir,
+    const std::filesystem::path& input_path,
+    const std::filesystem::path& out_dir,
     const SecureString& password,
     const DecryptParams& params
 );
 
 /// Returns true if path is an existing directory.
-bool is_directory(const std::string& path);
+bool is_directory(const std::filesystem::path& path);
 
 /// Returns true if path is an existing regular file.
-bool is_regular_file(const std::string& path);
+bool is_regular_file(const std::filesystem::path& path);
 
 /// Collect all file paths inside dir (recursively), relative to dir.
-std::vector<std::string> collect_files(const std::string& dir_path);
+std::vector<std::filesystem::path> collect_files(const std::filesystem::path& dir_path);
 
 /// Recursively remove a directory and its contents.
-void remove_directory_recursive(const std::string& path);
+void remove_directory_recursive(const std::filesystem::path& path);
 
 } // namespace minicrypto
 
