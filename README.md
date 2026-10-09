@@ -30,8 +30,8 @@ minicrypto lock my_project/
 # -> my_project.mcc
 
 # Decrypt a directory archive
-minicrypto unlock my_project.mcc --output my_project/
-# -> my_project/ (full directory tree restored)
+minicrypto unlock my_project.mcc
+# -> my_project.restored/ (full directory tree restored)
 
 # Two-factor: password + keyfile
 minicrypto lock secret.txt --mode split-key --keyfile usb.key
@@ -48,7 +48,10 @@ minicrypto lock secret.txt
 # Encrypt an entire directory
 minicrypto lock ~/Documents/project
 
-# Decrypt a directory archive (output path ending with / triggers directory mode)
+# Decrypt a directory archive (defaults to project.restored/)
+minicrypto unlock project.mcc
+
+# Or choose the destination explicitly
 minicrypto unlock project.mcc --output ./project/
 ```
 - Password → Argon2id → Key

@@ -393,6 +393,7 @@ int main(int argc, char** argv) {
 
         // ── unlock (decrypt) ──────────────────────────────────────────────────
         if (cmd == "unlock") {
+            const bool output_was_specified = !output.empty();
             if (output.empty()) {
                 // Default output: strip .mcc suffix, otherwise append .decrypted
                 output = input;
@@ -403,7 +404,7 @@ int main(int argc, char** argv) {
                     output += ".decrypted";
                 }
             }
-            // Normalise: strip trailing slash (we add it back when needed)
+            // Normalise output path by removing a trailing slash.
             while (output.size() > 1 && output.back() == '/') output.pop_back();
 
             // Get password
@@ -451,6 +452,9 @@ int main(int argc, char** argv) {
 
                 // Step 3a: unpack directory archive
                 if (is_dir_archive) {
+                    if (!output_was_specified) {
+                        output += ".restored";
+                    }
                     unpack_directory(tmp_dec, output);
                     std::error_code ec;
                     std::filesystem::remove(tmp_dec, ec);
