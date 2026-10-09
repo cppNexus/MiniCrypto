@@ -1,4 +1,4 @@
-# MiniCrypto v2.1
+# MiniCrypto v1
 
 [![Cross-Platform CI](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml/badge.svg)](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml)
 
@@ -134,6 +134,7 @@ minicrypto/
 │
 ├── .github/workflows/
 │   ├── ci.yml                # Cross-platform CI (Linux / macOS / Windows)
+│   ├── release.yml           # Release builds, tests, packages & GitHub Releases
 │   └── security-audit.yml    # Static binary & dependency security checks
 │
 ├── FAQ.md                    # Common questions & answers

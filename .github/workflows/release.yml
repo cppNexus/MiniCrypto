@@ -1,0 +1,110 @@
+name: Release Build
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    name: Build, test, and package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows-x86_64
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev libargon2-dev pkg-config
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install libsodium argon2
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        run: vcpkg install libsodium:x64-windows argon2:x64-windows
+
+      - name: Configure Release build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Configure Release build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTS=ON
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package release (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p package
+          cp build/minicrypto README.md LICENSE package/
+          tar -C package -czf "minicrypto-${{ matrix.platform }}-${GITHUB_SHA::12}.tar.gz" .
+
+      - name: Package release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item build/Release/minicrypto.exe package/
+          Copy-Item README.md, LICENSE package/
+          Compress-Archive -Path package/* -DestinationPath "minicrypto-${{ matrix.platform }}-$($env:GITHUB_SHA.Substring(0,12)).zip"
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: minicrypto-${{ matrix.platform }}
+          path: minicrypto-${{ matrix.platform }}-*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-test-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: minicrypto-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
