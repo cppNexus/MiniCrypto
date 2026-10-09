@@ -9,6 +9,7 @@
 #include <vector>
 #include <fstream>
 #include <filesystem>
+#include <limits>
 
 using namespace minicrypto;
 
@@ -299,9 +300,26 @@ int main(int argc, char** argv) {
                 params.deterministic_confirm_callback = deterministic_confirmation;
             }
 
-            // Progress bar (size unknown for directories until packed)
+            // Calculate total source size before packing so directory encryption
+            // can use the same progress bar as single-file encryption.
             uint64_t total_size = 0;
-            if (!input_is_dir) {
+            if (input_is_dir) {
+                const std::filesystem::path base(input);
+                for (const auto& rel : collect_files(input)) {
+                    std::error_code ec;
+                    const uintmax_t file_size = std::filesystem::file_size(base / rel, ec);
+                    if (ec) {
+                        throw CryptoException(ErrorCode::IO_ERROR,
+                            "cannot determine file size: " + (base / rel).string()
+                            + " (" + ec.message() + ")");
+                    }
+                    if (file_size > std::numeric_limits<uint64_t>::max() - total_size) {
+                        throw CryptoException(ErrorCode::IO_ERROR,
+                            "total directory size exceeds supported range: " + input);
+                    }
+                    total_size += static_cast<uint64_t>(file_size);
+                }
+            } else {
                 std::ifstream sz(input, std::ios::binary);
                 sz.seekg(0, std::ios::end);
                 total_size = static_cast<uint64_t>(sz.tellg());
