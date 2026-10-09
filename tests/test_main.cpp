@@ -649,7 +649,7 @@ int main() {
     }
 
     std::cout << "========================================\n";
-    std::cout << "   MiniCrypto v2.1 Test Suite\n";
+    std::cout << "   MiniCrypto v1.1 Test Suite\n";
     std::cout << "========================================\n";
 
     RUN_TEST(test_secure_memory);

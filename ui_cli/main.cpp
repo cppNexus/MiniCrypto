@@ -23,7 +23,7 @@ using namespace minicrypto;
 
 static void show_usage() {
     std::cout << R"(
-MiniCrypto v2.1 — Secure file & directory encryption
+MiniCrypto v1.1 — Secure file & directory encryption
 
 USAGE:
   minicrypto lock   <file|dir>   Encrypt file or directory
