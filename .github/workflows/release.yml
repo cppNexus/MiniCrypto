@@ -42,7 +42,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux' && matrix.container_image == ''
@@ -126,7 +126,7 @@ jobs:
           Compress-Archive -Path package/* -DestinationPath "minicrypto-${{ matrix.platform }}-$($env:GITHUB_SHA.Substring(0,12)).zip"
 
       - name: Upload packaged artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: minicrypto-${{ matrix.platform }}
           path: minicrypto-${{ matrix.platform }}-*
@@ -139,17 +139,24 @@ jobs:
     needs: build-test-package
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
       - name: Download platform packages
-        uses: actions/download-artifact@v4
-        with:
-          pattern: minicrypto-*
-          path: release-assets
-          merge-multiple: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'minicrypto-*' \
+            --dir release-assets
+          find release-assets -mindepth 2 -type f -exec mv -t release-assets {} +
+          find release-assets -mindepth 1 -type d -empty -delete
 
       - name: Create release and upload assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release-assets/*
           generate_release_notes: true
