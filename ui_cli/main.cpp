@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <filesystem>
 
 using namespace minicrypto;
 
@@ -375,7 +376,7 @@ int main(int argc, char** argv) {
         // ── unlock (decrypt) ──────────────────────────────────────────────────
         if (cmd == "unlock") {
             if (output.empty()) {
-                // Default output: strip .mcc, or append .decrypted
+                // Default output: strip .mcc suffix, otherwise append .decrypted
                 output = input;
                 if (output.size() > 4 &&
                     output.substr(output.size() - 4) == ".mcc") {
@@ -384,6 +385,8 @@ int main(int argc, char** argv) {
                     output += ".decrypted";
                 }
             }
+            // Normalise: strip trailing slash (we add it back when needed)
+            while (output.size() > 1 && output.back() == '/') output.pop_back();
 
             // Get password
             SecureString password;
@@ -393,46 +396,66 @@ int main(int argc, char** argv) {
 
             // Build params
             DecryptParams params;
-            params.mode         = enc_mode;
-            params.argon_time   = argon_t;
-            params.argon_mem_kb = argon_m;
+            params.mode          = enc_mode;
+            params.argon_time    = argon_t;
+            params.argon_mem_kb  = argon_m;
             params.argon_threads = argon_p;
-            params.keyfile      = keyfile_data.empty() ? nullptr : &keyfile_data;
+            params.keyfile       = keyfile_data.empty() ? nullptr : &keyfile_data;
 
-            ProgressBar progress(0);  // size unknown until header read
+            ProgressBar progress(0);  // plaintext size unknown until header is read
             params.progress_callback = [&progress](uint64_t bytes) {
                 progress.update(bytes);
             };
 
-            // Try to detect if this is a directory archive by peeking metadata
-            bool is_dir_archive = false;
+            // Step 1: decrypt into a temporary file
+            std::string tmp_dec = input + ".dec_tmp";
             try {
-                // If decryption would produce a directory archive, the user must
-                // supply --output pointing to a directory name.  We detect this by
-                // checking whether the output path already exists as a directory.
-                // For now we rely on the user supplying a meaningful --output.
-                is_dir_archive = is_directory(output);
-            } catch (...) {}
+                decrypt_file(input, tmp_dec, password, params);
+                progress.finish();
 
-            // Decrypt
-            // If the user supplied an output path that doesn't exist yet and the
-            // archive contains a directory, decrypt_directory will create it.
-            // If it's a regular file archive, decrypt_file produces a file.
-            // We try directory-aware decryption when --output ends with no extension
-            // or when the target is an existing directory.
-            bool try_dir = is_dir_archive ||
-                           (!output.empty() && output.back() == '/');
+                // Step 2: peek first 4 bytes to detect MCDA archive magic
+                bool is_dir_archive = false;
+                {
+                    std::ifstream f(tmp_dec, std::ios::binary);
+                    if (f) {
+                        uint8_t buf[4] = {};
+                        f.read(reinterpret_cast<char*>(buf), 4);
+                        if (f.gcount() == 4) {
+                            uint32_t magic =
+                                static_cast<uint32_t>(buf[0])
+                              | (static_cast<uint32_t>(buf[1]) << 8)
+                              | (static_cast<uint32_t>(buf[2]) << 16)
+                              | (static_cast<uint32_t>(buf[3]) << 24);
+                            is_dir_archive = (magic == ARCHIVE_MAGIC);
+                        }
+                    }
+                }
 
-            if (try_dir) {
-                decrypt_directory(input, output, password, params);
-                std::cout << "Decrypted directory: " << output << "\n";
-            } else {
-                // Attempt plain file decryption; if that fails with CORRUPTED_FILE
-                // it might be a directory archive — let the error propagate.
-                decrypt_file(input, output, password, params);
-                std::cout << "Decrypted: " << output << "\n";
+                // Step 3a: unpack directory archive
+                if (is_dir_archive) {
+                    unpack_directory(tmp_dec, output);
+                    std::error_code ec;
+                    std::filesystem::remove(tmp_dec, ec);
+                    std::cout << "Decrypted directory: " << output << "\n";
+                } else {
+                    // Step 3b: plain file — rename temp to final output
+                    std::error_code ec;
+                    std::filesystem::rename(tmp_dec, output, ec);
+                    if (ec) {
+                        // Cross-device rename fallback
+                        std::filesystem::copy_file(tmp_dec, output,
+                            std::filesystem::copy_options::overwrite_existing, ec);
+                        std::filesystem::remove(tmp_dec, ec);
+                        if (ec) throw CryptoException(ErrorCode::IO_ERROR,
+                            "cannot write output: " + output);
+                    }
+                    std::cout << "Decrypted: " << output << "\n";
+                }
+            } catch (...) {
+                std::error_code ec;
+                std::filesystem::remove(tmp_dec, ec);
+                throw;
             }
-            progress.finish();
 
             return 0;
         }
