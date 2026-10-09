@@ -36,3 +36,5 @@ offline_test.*
 off_in.txt
 off_out.mcc
 .RELEASE_RUNBOOK.md
+DENIABLE_STORAGE_DESIGN_PLAN.md
+SECURITY_TESTING_AND_REMEDIATION.md

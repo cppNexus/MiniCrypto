@@ -1,404 +1,50 @@
-# MiniCrypto Architecture
-
-##  Core Principles
-
-### 1. Library-First Design
-**Problem**: Original code had UI (ProgressBar) directly in crypto.cpp
-**Solution**: Core library has ZERO UI dependencies
-
-```cpp
-// [FAIL] WRONG (old code)
-void encrypt_file(...) {
-    ProgressBar progress(fsize);  // UI IN CORE!
-    progress.update(got);
-}
-
-// [PASS] CORRECT (new code)
-void encrypt_file(..., const EncryptParams& params) {
-    if (params.progress_callback) {
-        params.progress_callback(processed);  // Optional callback
-    }
-}
-```
-
-**Benefits**:
-- Core can be used as library
-- No forced terminal output
-- GUI wrappers possible
-- Server integration possible
-- Testing without UI noise
-
-### 2. Mode-Based Architecture
-
-**Problem**: `headerless` was just a boolean flag
-**Solution**: Explicit `EncryptionMode` enum
-
-```cpp
-enum class EncryptionMode {
-    STANDARD,      // password → Argon2id → key
-    SPLIT_KEY,     // password + keyfile → Argon2id → key
-    KEY_ONLY,      // keyfile → HKDF → key (no password)
-    HEADERLESS     // derived nonce, minimal header
-};
-```
-
-**Why This Matters**:
-- Clear intent in code
-- Type safety (can't mix modes accidentally)
-- Easy to add new modes later
-- Self-documenting API
-
-### 3. Separation of Concerns
-
-```
-Core Library (libminicrypto_core)
-├── crypto.cpp     - Encryption/decryption logic
-├── keygen.cpp     - Key derivation functions
-├── format.cpp     - File format handling
-├── secure_memory.cpp - mlock, zeroize
-└── file_ops.cpp   - Atomic writes, secure delete
-
-CLI Wrapper (minicrypto executable)
-├── main.cpp       - Argument parsing
-└── ui.cpp         - Progress bars, prompts
-```
-
-**Boundaries**:
-- Core NEVER calls UI
-- UI NEVER implements crypto
-- Clean dependency graph
-
-##  Cryptographic Design
-
-### Key Derivation Modes
-
-#### 1. STANDARD
-```
-password → Argon2id → key
-         ↓
-      (salt from file)
-```
-
-#### 2. SPLIT-KEY
-```
-password + keyfile → Argon2id → key
-                  ↓
-               (salt from file)
-```
-**Use case**: USB key + password (two-factor)
-
-#### 3. KEY-ONLY
-```
-keyfile → HKDF-BLAKE2b → key
-       ↓
-    (salt from file)
-```
-**Use case**: Automated systems, no password prompt
-**Why HKDF instead of Argon2**: No password = no brute-force risk, skip expensive KDF
-
-#### 4. HEADERLESS
-```
-password → Argon2id → key
-         ↓
-password + salt + "NONCE" → BLAKE2b → nonce (deterministic)
-```
-**Use case**: Steganography, deniability
-**Header**: Only 16-byte salt, no magic number, no size, no parameters
-
-### Nonce Strategy
-
-| Mode | Nonce Source | Security Property |
-|------|-------------|-------------------|
-| STANDARD | Random (24 bytes) | Maximum entropy |
-| SPLIT-KEY | Random (24 bytes) | Maximum entropy |
-| KEY-ONLY | Random (24 bytes) | Maximum entropy |
-| HEADERLESS | Derived from password+salt | Deterministic, allows minimal header |
-
-**Why deterministic nonce for HEADERLESS?**
-- Allows 16-byte header (salt only)
-- Still secure: nonce derived from password (unknown to attacker)
-- Enables deniable encryption (no magic number)
-
-##  Build System Design
-
-### Static vs Dynamic
-
-```cmake
-# Dynamic build (default)
-cmake ..
-make
-# Links to system libsodium, libargon2
-
-# Static build (air-gapped)
-cmake .. -DBUILD_STATIC_CLI=ON
-make
-# Embeds everything, no runtime dependencies
-```
-
-**Why both?**
-- Dynamic: Package managers, updates
-- Static: Air-gapped systems, no dependencies
-
-### Library-Only Build
-
-```cmake
-cmake .. -DBUILD_CLI=OFF
-make install
-# Installs only libminicrypto_core
-```
-
-**Use case**: Integrate into other projects
-
-##  Security Decisions
-
-### 1. Memory Management
-
-```cpp
-// [PASS] CORRECT
-SecureBuffer key_buf(KEY_LEN);  // mlock'd, auto-zeroed
-derive_key(..., key_buf.data(), ...);
-// ~SecureBuffer() → sodium_memzero + munlock
-
-// [FAIL] WRONG
-unsigned char key[KEY_LEN];  // Can be swapped, not zeroed
-```
-
-**Why SecureBuffer?**
-- RAII: automatic cleanup
-- mlock: prevents swap
-- sodium_memzero: compiler can't optimize away
-
-### 2. Password Handling
-
-```cpp
-// [PASS] CORRECT
-SecureString password = get_password_interactive(true);
-encrypt_file(..., password, ...);
-// ~SecureString() → sodium_memzero
-
-// [FAIL] WRONG
-std::string password;  // Copies everywhere, never truly deleted
-```
-
-**Why SecureString?**
-- No std::string copies
-- mlock'd vector
-- Guaranteed zeroing on destruction
-
-### 3. Atomic File Writes
-
-```cpp
-AtomicFile output(path);
-output.get() << data;  // Write to .tmp
-output.commit();       // Atomic rename
-// If crash/exception: .tmp cleaned up, original untouched
-```
-
-**Why?**
-- Never corrupt original on failure
-- Disk-full handling
-- Clean error recovery
-
-### 4. Secure Deletion
-
-```cpp
-void secure_delete(const std::string& path) {
-    // 3-pass overwrite: 0xFF → 0x00 → random
-    // fsync() between passes
-    // unlink()
-}
-```
-
-**Limitations documented**:
-- SSDs: wear-leveling
-- CoW filesystems: snapshots
-- Journaling: metadata
-
-**Honest approach**: Document limitations, not false security
-
-##  Anti-Patterns Avoided
-
-### 1. No Implicit UI
-```cpp
-// [FAIL] BAD (old code)
-void encrypt_file(...) {
-    std::cout << "Encrypting..." << std::endl;  // Forces terminal
-}
-
-// [PASS] GOOD (new code)
-void encrypt_file(..., params) {
-    if (params.progress_callback) {
-        params.progress_callback(bytes);  // Optional
-    }
-}
-```
-
-### 2. No Boolean Hell
-```cpp
-// [FAIL] BAD
-encrypt_file(..., bool headerless, bool use_keyfile, bool split_mode);
-
-// [PASS] GOOD
-encrypt_file(..., EncryptionMode mode, const EncryptParams& params);
-```
-
-### 3. No Mixed Responsibilities
-```cpp
-// [FAIL] BAD
-// crypto.cpp includes ui.h and calls UI functions
-
-// [PASS] GOOD
-// crypto.cpp only does crypto
-// main.cpp calls crypto with progress callbacks
-```
-
-##  Data Flow
-
-### Encryption
-
-```
-Input File
-    ↓
-[Read Plaintext] ← CHUNK_SIZE
-    ↓
-[Derive Key] ← Password + Salt (+ Keyfile if mode requires)
-    ↓         (Argon2id or HKDF)
-    ↓
-[Generate/Derive Nonce] ← Random or Derived
-    ↓
-[Write Header] ← Full or Minimal (based on mode)
-    ↓
-[Init Stream] ← XChaCha20-Poly1305
-    ↓
-[Encrypt Chunks] ← secretstream API
-    ↓           ← Progress callback if provided
-    ↓
-[Write Ciphertext]
-    ↓
-[Atomic Commit] ← .tmp → final
-    ↓
-[Optional Verify] ← Decrypt + Compare
-    ↓
-[Optional Secure Delete]
-```
-
-### Decryption
-
-```
-Input File
-    ↓
-[Read Header] ← Full or Minimal (based on mode)
-    ↓
-[Validate Magic] ← Skip if HEADERLESS
-    ↓
-[Derive Key] ← Password + Salt (+ Keyfile if mode requires)
-    ↓
-[Derive Nonce if HEADERLESS]
-    ↓
-[Init Stream] ← XChaCha20-Poly1305
-    ↓
-[Decrypt Chunks] ← secretstream API
-    ↓            ← Verify MAC each chunk
-    ↓            ← Progress callback if provided
-    ↓
-[Write Plaintext]
-    ↓
-[Atomic Commit]
-```
-
-##  Error Handling Philosophy
-
-```cpp
-// Specific error codes
-enum class ErrorCode {
-    OK,
-    FILE_NOT_FOUND,
-    WRONG_PASSWORD,
-    CORRUPTED_FILE,
-    INVALID_MODE,    // New: mode validation
-    // ...
-};
-
-// Exceptions with context
-throw CryptoException(ErrorCode::INVALID_MODE, 
-    "KEY_ONLY mode requires keyfile");
-```
-
-**Why?**
-- Caller can handle specific errors
-- Better than generic "something failed"
-- Exit codes map to error codes
-
-##  Lessons Learned
-
-### What Changed from Original Code
-
-1. **Removed UI from Core**
-   - Old: ProgressBar in crypto.cpp
-   - New: Optional callback in EncryptParams
-
-2. **Explicit Modes**
-   - Old: `bool headerless`
-   - New: `EncryptionMode` enum
-
-3. **Unified Key Derivation**
-   - Old: Separate functions with duplicated logic
-   - New: Single `derive_key()` dispatcher
-
-4. **Better Testability**
-   - Old: Hard to test without terminal
-   - New: Core library has no I/O dependencies
-
-5. **Library Usage**
-   - Old: Only CLI usable
-   - New: Clean API for integration
-
-##  Future Extensions
-
-Architecture supports:
-
-1. **New Modes**
-   - Add to `EncryptionMode` enum
-   - Implement in `keygen.cpp`
-   - No changes to `crypto.cpp`
-
-2. **GUI Wrapper**
-   - Link to `libminicrypto_core`
-   - Provide progress callbacks
-   - No recompilation needed
-
-3. **Server Integration**
-   - Use as library
-   - Async callbacks
-   - No terminal assumptions
-
-4. **Hardware Keys**
-   - New mode: `EncryptionMode::HARDWARE_KEY`
-   - Derive key from PKCS#11
-   - Minimal changes
-
-## [PASS] Validation
-
-### Design Goals Achieved
-
-- [PASS] Core library has zero UI dependencies
-- [PASS] Can build as static or dynamic
-- [PASS] Four distinct encryption modes
-- [PASS] Clean API for library usage
-- [PASS] No network dependencies
-- [PASS] No time dependencies
-- [PASS] Fully testable without I/O
-- [PASS] Air-gapped ready
-
-### Non-Goals (Explicitly Rejected)
-
-- [FAIL] Network protocols (SSH, TLS)
-- [FAIL] Key management servers
-- [FAIL] Telemetry or analytics
-- [FAIL] Auto-updates
-- [FAIL] Cloud integration
-- [FAIL] "Smart" features requiring network
-
----
-
-**Keep it simple. Keep it offline. Keep it auditable.**
+MiniCrypto: Project Architecture
+
+This document describes the current implementation, does not promise that it is free of errors, and does not replace reviewing the source code. No specialized external audit has been performed; whether to commission one is up to interested users.
+
+Components
+core/crypto.cpp, core/crypto.h: streaming file encryption, decryption, and verification.
+core/keygen.cpp, core/keygen.h: key derivation for the modes.
+core/format.cpp, core/format.h: the MiniCrypto v2 full header and its validation.
+core/deniable.cpp, core/deniable.h: the experimental fixed-slot container, separate from the legacy formats.
+core/dir_ops.cpp, core/dir_ops.h: packing and unpacking of an MCDA directory.
+core/secure_memory.cpp, core/secure_memory.h: buffers, wiping, and the attempt to lock memory.
+core/file_ops.cpp, core/file_ops.h: temporary files, atomic publication in some operations, best-effort secure delete.
+ui_cli/: CLI, passwords, warnings, and progress. Core does not depend on the CLI/UI, but performs file I/O itself.
+tests/test_main.cpp: unit and integration tests of selected scenarios; a finite number of tests does not prove the absence of defects.
+Algorithms by Mode
+Mode	Key material	Salt/stream header	Note
+STANDARD	Argon2id over the password	Random 32-byte salt; random secretstream header	The full plaintext header contains the mode, KDF parameters, and plaintext size
+SPLIT-KEY	Argon2id over the concatenation of password bytes and keyfile bytes	Random salt and secretstream header	The input components have no separate length prefix
+KEY-ONLY	BLAKE2b-256 over the keyfile, salt, and domain context	Random salt and random secretstream header	Not HKDF; does not use a password KDF
+HEADERLESS	The STANDARD path, or SPLIT-KEY when a keyfile is used	32-byte salt; new files derive the secretstream header from the KDF key and the salt	Old files with a random stream header remain readable; data length is visible
+--deterministic	A special Argon2id pre-key; then the normal mode KDF	Salt and stream header are derived deterministically	Identical inputs reveal ciphertext equality; dangerous mode
+Fixed-slot prototype	Argon2id + BLAKE2b role separation	Two fixed slots, XChaCha20-Poly1305-IETF AEAD	Experimental, with no proof of deniability
+
+The --deterministic flag applies to the normal encryption modes; it overrides the usual random salt/header for that run. Ciphertexts can be compared as identical only if all KDF- and mode-related inputs match.
+
+The detailed security description and limitations are in Security.md; the prototype plan is in docs/DENIABLE_STORAGE_DESIGN_PLAN.md.
+
+Formats and Integrity
+
+The normal v2 format writes the packed C++ Header directly (the current struct size is 84 bytes), followed by the secretstream header and the chunks. Headerless writes a 32-byte salt, then the stream header and the ciphertext. Secretstream tags authenticate the stream messages; the fields of the normal header are not passed as AAD. The plaintext_size field is not compared with the actual plaintext; some unknown/reserved fields do not affect derivation. After TAG_FINAL, trailing bytes are currently not rejected.
+
+Normal files use AtomicFile, but its temporary name and replacement path have limitations; this is not a promise that the old destination survives any failure. The new fixed-slot module uses a separate private temp path and publishes the output only after the slot has been verified. Directory unpacking consists of sequential file writes and is not a transaction over the whole tree.
+
+The MCDA archive stores the directory structure inside the encrypted file stream when directory lock/unlock is used. The unpacking checks block the main traversal forms, but they are not a full sandbox guarantee on every OS.
+
+Memory and Deletion
+
+SecureBuffer/SecureString wipe their own managed buffers and try to use OS memory locking. Locking may fail; temporary std::vectors, library buffers, the keyfile, and copies outside these classes do not automatically become protected. This is not protection against malware, core dumps, or observation of input.
+
+secure_delete performs several write passes and tries to sync the changes before unlink. Errors and storage-medium properties limit the result; physical erasure on SSDs, CoW, snapshots, and backup systems is not guaranteed.
+
+Build and Tests
+
+CMake builds the core library, the CLI, and the test executable when the BUILD_TESTS option is enabled. By default BUILD_SHARED_LIBS=OFF; BUILD_STATIC_CLI requests static linking, but how complete the resulting static linking is depends on the toolchain and libraries. Check the actual build for your platform.
+
+CI and CTest run specific configurations. A passing test means that the checked scenarios passed in that build; it does not prove cryptographic security, support for all systems, or the absence of errors.
+
+Limits of the Promises
+
+MiniCrypto uses libsodium and Argon2, but choosing well-known libraries does not prove the correctness of the whole scheme or the integration. The project promises only the described behavior of the implementation in a specific build. The program is provided “as is”; backups and the decision to use it remain the user’s responsibility. It is impossible to promise absolute undecryptability: the correct credentials are meant to decrypt, and an attacker can guess weak credentials or compromise the device.

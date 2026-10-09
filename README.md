@@ -13,7 +13,7 @@
 - **Directory support** — seamless streaming archive packing/unpacking and encryption
 - **Headerless support** — for steganography and plausible deniability
 - **Air-gap ready** — static builds, deterministic builds, no runtime surprises
-  
+
 ## ⚠️ CRITICAL WARNING — READ BEFORE USE
 
 **MINICRYPTO CAN CAUSE PERMANENT AND IRREVERSIBLE DATA LOSS.**

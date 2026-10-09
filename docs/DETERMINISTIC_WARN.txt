@@ -1,0 +1,23 @@
+MINICRYPTO — DETERMINISTIC ENCRYPTION WARNING
+
+This warning applies to --deterministic. The mode intentionally makes results reproducible when the plaintext, password, mode, keyfile (if used), and KDF parameters all match.
+
+WHAT AN OBSERVER CAN LEARN
+Whether two containers are equal, and which copies/versions are linked to each other.
+The approximate/exact length of the data from the format, and the number of repeated instances.
+Test hypotheses about a small set of likely files by comparing deterministic ciphertexts, if the observer knows the algorithm and all parameters except the presumed secrets.
+
+Equality of copies by itself does not prove when or how many times the user opened the file. This mode does not implement searchable encryption and does not provide author verification by hash comparison.
+
+HOW THE MODE WORKS
+
+For salt derivation, the code hashes the plaintext with SHA-256, derives a pre-key via Argon2id with fixed parameters (5 iterations, 256 MiB memory, 2 threads), and then uses BLAKE2b with a domain context. The secretstream header is also derived deterministically. These costs slow down some password checks, but they do not rule out offline brute force and do not make the mode safe for weak passwords.
+
+WHAT NOT TO DO
+Do not enable the mode if leaking equality, links between copies, or size is unacceptable.
+Do not treat identical hashes as confirmation of integrity against tampering or of the authenticity of a manifest.
+Do not treat random test data as proof of cryptographic security.
+
+The normal mode with a fresh random salt is intended for scenarios where re-encryptions need to be randomized. No mode guarantees that the program is free of errors or that decryption is impossible given a weak secret or a compromised device.
+
+To proceed, the CLI asks for the confirmation I UNDERSTAND THE RISKS. Use the mode only if you understand and accept the described leaks; the decision and the risk of use remain with the user.
