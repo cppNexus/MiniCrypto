@@ -259,6 +259,45 @@ minicrypto test
 ./build/minicrypto_tests
 ```
 
+## Release verification
+
+For each `v*` tag, `release.yml` builds and tests packages for Debian, Rocky Linux,
+Arch Linux, macOS, and Windows. It creates a **draft** GitHub Release containing
+the platform archives, per-archive `.sha256` files, `SHA256SUMS`, and
+`SBOM.spdx.json`. The Rocky Linux build installs the EPEL development package
+`libargon2-devel`.
+
+The draft is intentionally not published automatically: the workflow does not
+have access to the release-signing private key. On a trusted, offline machine,
+review the release inputs (and reproduce the build where practical), then sign
+the manifest with minisign using a private key stored only on that machine:
+
+```bash
+minisign -Sm SHA256SUMS -s /offline/path/minisign.key
+```
+
+This creates `SHA256SUMS.minisig`. Attach it to the draft GitHub Release, then
+publish the release. Never put the private key in the repository, CI secrets, or
+the binary. Publish the corresponding public key and its fingerprint through an
+independent trusted channel.
+
+Users should verify the manifest signature before trusting any listed hashes:
+
+```bash
+minisign -Vm SHA256SUMS -P '<trusted-public-key>'
+sha256sum -c SHA256SUMS
+```
+
+On Windows, verify each downloaded package using PowerShell:
+
+```powershell
+Get-FileHash .\MiniCrypto-v1.0.0-windows-x86_64.zip -Algorithm SHA256
+```
+
+Compare its hash with the corresponding entry in the signed `SHA256SUMS`.
+Obtain the minisign public key independently and verify its fingerprint; a
+signature establishes provenance only relative to that trusted key.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) file.

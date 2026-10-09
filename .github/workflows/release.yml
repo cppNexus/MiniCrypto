@@ -76,7 +76,7 @@ jobs:
                 rocky)
                   dnf install -y dnf-plugins-core epel-release
                   dnf config-manager --set-enabled crb
-                  dnf install -y cmake gcc-c++ make pkgconf-pkg-config libsodium-devel argon2-devel
+                  dnf install -y cmake gcc-c++ make pkgconf-pkg-config libsodium-devel libargon2-devel
                   ;;
                 arch)
                   pacman -Syu --noconfirm --needed base-devel cmake pkgconf libsodium argon2
@@ -112,24 +112,36 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          release_version="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            release_version="dev-${GITHUB_SHA:0:12}"
+          fi
+          platform="${{ matrix.platform }}"
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            platform="macos-$(uname -m)"
+          fi
           mkdir -p package
           cp build/minicrypto README.md LICENSE package/
-          tar -C package -czf "minicrypto-${{ matrix.platform }}-${GITHUB_SHA::12}.tar.gz" .
+          tar -C package -czf "MiniCrypto-${release_version}-${platform}.tar.gz" .
 
       - name: Package release (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $releaseVersion = $env:GITHUB_REF_NAME
+          if ($env:GITHUB_REF_TYPE -ne 'tag') {
+            $releaseVersion = "dev-$($env:GITHUB_SHA.Substring(0,12))"
+          }
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item build/Release/minicrypto.exe package/
           Copy-Item README.md, LICENSE package/
-          Compress-Archive -Path package/* -DestinationPath "minicrypto-${{ matrix.platform }}-$($env:GITHUB_SHA.Substring(0,12)).zip"
+          Compress-Archive -Path package/* -DestinationPath "MiniCrypto-$releaseVersion-${{ matrix.platform }}.zip"
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v6
         with:
           name: minicrypto-${{ matrix.platform }}
-          path: minicrypto-${{ matrix.platform }}-*
+          path: MiniCrypto-*
           if-no-files-found: error
           retention-days: 30
 
@@ -155,8 +167,34 @@ jobs:
           find release-assets -mindepth 2 -type f -exec mv -t release-assets {} +
           find release-assets -mindepth 1 -type d -empty -delete
 
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: release-assets
+          format: spdx-json
+          output-file: release-assets/SBOM.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate SHA-256 manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          packages=(MiniCrypto-*.tar.gz MiniCrypto-*.zip)
+          if (( ${#packages[@]} == 0 )); then
+            echo "No release packages were downloaded" >&2
+            exit 1
+          fi
+          for file in "${packages[@]}"; do
+            sha256sum "$file" > "$file.sha256"
+          done
+          sha256sum MiniCrypto-* SBOM.spdx.json | sort -k2 > SHA256SUMS
+
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v3
         with:
           files: release-assets/*
           generate_release_notes: true
+          draft: true
