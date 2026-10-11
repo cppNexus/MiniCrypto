@@ -338,8 +338,8 @@ A checksum only checks a file against a manifest; it is not proof of authorship.
 
 - [docs/SECURITY.md](docs/SECURITY.md) — what is and is not guaranteed
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — implementation overview
-- [FAQ.md](FAQ.md)
-- [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
+- [FAQ.md](docs/FAQ.md)
+- [PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
 
 ## License
 
