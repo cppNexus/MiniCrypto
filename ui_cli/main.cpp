@@ -4,13 +4,17 @@
 #include "../core/file_ops.h"
 #include "../core/format.h"
 #include "../ui_cli/ui.h"
+
+#include <sodium.h>
+
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <sodium.h>
 #include <string>
 #include <vector>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -20,8 +24,7 @@
 
 using namespace minicrypto;
 
-// ── Usage
-// ─────────────────────────────────────────────────────────────────────
+// ── Usage ─────────────────────────────────────────────────────────────────────
 
 static void show_usage() {
   std::cout << R"(
@@ -106,10 +109,9 @@ SECURITY:
 )" << std::flush;
 }
 
-// ── Info
-// ──────────────────────────────────────────────────────────────────────
+// ── Info ──────────────────────────────────────────────────────────────────────
 
-static void show_info(const std::filesystem::path &path) {
+static void show_info(const std::filesystem::path& path) {
   try {
     FileMetadata meta = read_metadata(path);
 
@@ -136,32 +138,27 @@ static void show_info(const std::filesystem::path &path) {
       std::cout << "  Encryption     : XChaCha20-Poly1305\n";
       std::cout << "  KDF            : Argon2id\n";
       std::cout << "    Time         : " << meta.argon_time << " iterations\n";
-      std::cout << "    Memory       : " << (meta.argon_mem_kb / 1024)
-                << " MB\n";
+      std::cout << "    Memory       : " << (meta.argon_mem_kb / 1024) << " MB\n";
       std::cout << "    Threads      : " << meta.argon_threads << "\n";
     } else {
       std::cout << "  [!] Headerless file (minimal metadata)\n";
       std::cout << "  Mode           : HEADERLESS or unknown\n";
       std::cout << "  Decryption requires matching parameters\n";
     }
-  } catch (const CryptoException &e) {
+  } catch (const CryptoException& e) {
     std::cerr << "Error: " << e.what() << "\n";
   }
 }
 
-// ── Deterministic mode confirmation
-// ───────────────────────────────────────────
+// ── Deterministic mode confirmation ───────────────────────────────────────────
 
 static bool deterministic_confirmation() {
   std::cerr << "\n";
-  std::cerr
-      << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+  std::cerr << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
   std::cerr << "DETERMINISTIC ENCRYPTION MODE WARNING\n";
-  std::cerr
-      << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+  std::cerr << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
   std::cerr << "\n";
-  std::cerr << "This mode produces IDENTICAL ciphertext for identical "
-               "plaintext + password.\n";
+  std::cerr << "This mode produces IDENTICAL ciphertext for identical plaintext + password.\n";
   std::cerr << "\n";
   std::cerr << "SECURITY IMPLICATIONS:\n";
   std::cerr << "  • Leaks equality of plaintexts and links between copies\n";
@@ -176,8 +173,7 @@ static bool deterministic_confirmation() {
   std::cerr << "\n";
   std::cerr << "DEFAULT MODE (random salt) is MUCH MORE SECURE.\n";
   std::cerr << "\n";
-  std::cerr
-      << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+  std::cerr << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
   std::cerr << "\n";
 
   std::cout << "Type 'I UNDERSTAND THE RISKS' to proceed: " << std::flush;
@@ -196,20 +192,18 @@ static bool deterministic_confirmation() {
   return false;
 }
 
-static std::filesystem::path
-make_verify_temp_path(const std::filesystem::path &input) {
+static std::filesystem::path make_verify_temp_path(const std::filesystem::path& input) {
   unsigned char random_suffix[16];
   char suffix_hex[33];
   randombytes_buf(random_suffix, sizeof(random_suffix));
-  sodium_bin2hex(suffix_hex, sizeof(suffix_hex), random_suffix,
-                 sizeof(random_suffix));
+  sodium_bin2hex(suffix_hex, sizeof(suffix_hex), random_suffix, sizeof(random_suffix));
   std::filesystem::path temp = input;
   temp += ".verify_tmp.";
   temp += suffix_hex;
   return temp;
 }
 
-static std::filesystem::path path_from_cli_arg(const std::string &value) {
+static std::filesystem::path path_from_cli_arg(const std::string& value) {
 #ifdef _WIN32
   return std::filesystem::u8path(value);
 #else
@@ -217,10 +211,367 @@ static std::filesystem::path path_from_cli_arg(const std::string &value) {
 #endif
 }
 
-// ── main
-// ──────────────────────────────────────────────────────────────────────
+// ── CLI Options and Argument Helpers ─────────────────────────────────────────
 
-static int run_cli(int argc, char **argv) {
+struct CliOptions {
+  std::filesystem::path input;
+  std::filesystem::path output;
+  std::filesystem::path keyfile_path;
+  std::filesystem::path hidden_path;
+  std::string enc_mode_str = "standard";
+  EncryptionMode enc_mode = EncryptionMode::STANDARD;
+  std::vector<uint8_t> keyfile_data;
+  bool keep_original = false;
+  bool do_verify = true;
+  bool deterministic = false;
+  uint32_t argon_t = ARGON_T_DEFAULT;
+  uint32_t argon_m = ARGON_M_DEFAULT;
+  uint32_t argon_p = ARGON_P_DEFAULT;
+  uint64_t slot_size_bytes = 16ULL * 1024ULL * 1024ULL;
+};
+
+static bool parse_uint32_arg(const std::string& opt, const std::string& val, uint32_t& out) {
+  try {
+    size_t idx = 0;
+    unsigned long v = std::stoul(val, &idx);
+    if (idx != val.size() || v > std::numeric_limits<uint32_t>::max()) {
+      std::cerr << "Error: invalid value for " << opt << ": " << val << "\n";
+      return false;
+    }
+    out = static_cast<uint32_t>(v);
+    return true;
+  } catch (...) {
+    std::cerr << "Error: invalid numeric value for " << opt << ": " << val << "\n";
+    return false;
+  }
+}
+
+static bool parse_slot_size_arg(const std::string& val, uint64_t& out_bytes) {
+  try {
+    size_t idx = 0;
+    unsigned long long v = std::stoull(val, &idx);
+    if (idx != val.size()) {
+      std::cerr << "Error: invalid value for --slot-size: " << val << "\n";
+      return false;
+    }
+    if (v <= 64) {
+      out_bytes = v * 1024ULL * 1024ULL;
+    } else {
+      out_bytes = v;
+    }
+    return true;
+  } catch (...) {
+    std::cerr << "Error: invalid numeric value for --slot-size: " << val << "\n";
+    return false;
+  }
+}
+
+// ── Command Handlers ──────────────────────────────────────────────────────────
+
+static int handle_container_create(const CliOptions& opt) {
+  if (opt.output.empty()) {
+    std::cerr << "Error: container-create requires --output <file>\n";
+    return 1;
+  }
+  DeniableContainerOptions opts;
+  opts.slot_size_bytes = opt.slot_size_bytes;
+  opts.argon_time      = opt.argon_t;
+  opts.argon_mem_kb    = opt.argon_m;
+  opts.argon_threads   = opt.argon_p;
+
+  SecureString cover_pass = get_password_interactive(true, "cover password");
+  if (!opt.hidden_path.empty()) {
+    SecureString hidden_pass = get_password_interactive(true, "hidden password");
+    create_deniable_container(opt.input, &opt.hidden_path, opt.output, cover_pass, &hidden_pass, opts);
+  } else {
+    create_deniable_container(opt.input, nullptr, opt.output, cover_pass, nullptr, opts);
+  }
+  std::cout << colorize("[OK]", TerminalColor::GREEN)
+            << " Created container: " << opt.output.u8string() << "\n";
+  return 0;
+}
+
+static int handle_container_open(const CliOptions& opt) {
+  if (opt.output.empty()) {
+    std::cerr << "Error: container-open requires --output <file>\n";
+    return 1;
+  }
+  DeniableContainerOptions opts;
+  opts.slot_size_bytes = opt.slot_size_bytes;
+  opts.argon_time      = opt.argon_t;
+  opts.argon_mem_kb    = opt.argon_m;
+  opts.argon_threads   = opt.argon_p;
+
+  SecureString pass = get_password_interactive(false, "password");
+  open_deniable_container(opt.input, opt.output, pass, opts);
+  std::cout << colorize("[OK]", TerminalColor::GREEN)
+            << " Decrypted container slot to: " << opt.output.u8string() << "\n";
+  return 0;
+}
+
+static int handle_verify(const CliOptions& opt) {
+  SecureString password;
+  if (opt.enc_mode != EncryptionMode::KEY_ONLY) {
+    password = get_password_interactive(/*confirm=*/false);
+  }
+
+  DecryptParams params;
+  params.mode          = opt.enc_mode;
+  params.argon_time    = opt.argon_t;
+  params.argon_mem_kb  = opt.argon_m;
+  params.argon_threads = opt.argon_p;
+  params.keyfile       = opt.keyfile_data.empty() ? nullptr : &opt.keyfile_data;
+
+  const std::filesystem::path temp_decrypt = make_verify_temp_path(opt.input);
+  try {
+    // Decrypting the complete stream verifies every authentication tag.
+    decrypt_file(opt.input, temp_decrypt, password, params);
+    secure_delete(temp_decrypt);
+  } catch (...) {
+    secure_delete(temp_decrypt);
+    throw;
+  }
+
+  std::cout << colorize("[OK]", TerminalColor::GREEN)
+            << " Integrity verified: " << opt.input.u8string() << "\n";
+  return 0;
+}
+
+static int handle_lock(CliOptions opt) {
+  const bool input_is_dir = minicrypto::is_directory(opt.input);
+  const bool output_was_specified = !opt.output.empty();
+
+  if (opt.output.empty()) {
+    // Strip trailing slash for directories
+    std::filesystem::path base = opt.input;
+    while (base != base.root_path() && base.filename().empty()) {
+      base = base.parent_path();
+    }
+    opt.output = base;
+    opt.output += ".mcc";
+  }
+
+  if (input_is_dir && !output_was_specified) {
+    warn("default archive path is next to the source directory: " +
+         opt.output.u8string() + "; use --output to choose another location");
+  }
+
+  std::cout << "Input    : " << opt.input.u8string()
+            << (input_is_dir ? " (directory)" : " (file)") << "\n";
+  std::cout << "Output   : " << opt.output.u8string() << "\n";
+  std::cout << "Mode     : " << opt.enc_mode_str;
+  if (opt.deterministic) std::cout << " (DETERMINISTIC)";
+  std::cout << "\n";
+  std::cout << "Argon2   : t=" << opt.argon_t
+            << ", m=" << (opt.argon_m / 1024) << "MB"
+            << ", p=" << opt.argon_p << "\n";
+
+  // Get password
+  SecureString password;
+  if (opt.enc_mode != EncryptionMode::KEY_ONLY) {
+    password = get_password_interactive(/*confirm=*/true);
+  }
+
+  // Build params
+  EncryptParams params;
+  params.mode            = opt.enc_mode;
+  params.argon_time      = opt.argon_t;
+  params.argon_mem_kb    = opt.argon_m;
+  params.argon_threads   = opt.argon_p;
+  params.keyfile         = opt.keyfile_data.empty() ? nullptr : &opt.keyfile_data;
+  params.deterministic_salt = opt.deterministic;
+  if (opt.deterministic) {
+    params.deterministic_confirm_callback = deterministic_confirmation;
+  }
+
+  // Calculate total source size before packing
+  uint64_t total_size = 0;
+  if (input_is_dir) {
+    const std::filesystem::path base(opt.input);
+    for (const auto& rel : collect_files(opt.input)) {
+      std::error_code ec;
+      const uintmax_t file_size = std::filesystem::file_size(base / rel, ec);
+      if (ec) {
+        throw CryptoException(
+            ErrorCode::IO_ERROR,
+            "cannot determine file size: " + (base / rel).u8string() +
+                " (" + ec.message() + ")");
+      }
+      if (file_size > std::numeric_limits<uint64_t>::max() - total_size) {
+        throw CryptoException(
+            ErrorCode::IO_ERROR,
+            "total directory size exceeds supported range: " + opt.input.u8string());
+      }
+      total_size += static_cast<uint64_t>(file_size);
+    }
+  } else {
+    std::ifstream sz(opt.input, std::ios::binary);
+    sz.seekg(0, std::ios::end);
+    total_size = static_cast<uint64_t>(sz.tellg());
+  }
+
+  ProgressBar progress(total_size);
+  params.progress_callback = [&progress](uint64_t bytes) {
+    progress.update(bytes);
+  };
+
+  // Encrypt
+  if (input_is_dir) {
+    encrypt_directory(opt.input, opt.output, password, params);
+  } else {
+    encrypt_file(opt.input, opt.output, password, params);
+  }
+  progress.finish();
+
+  // Verify (only for single files — directory archives are verified by encrypt_directory)
+  if (opt.do_verify && !input_is_dir) {
+    std::cout << "Verifying encryption... " << std::flush;
+
+    DecryptParams dp;
+    dp.mode          = opt.enc_mode;
+    dp.argon_time    = opt.argon_t;
+    dp.argon_mem_kb  = opt.argon_m;
+    dp.argon_threads = opt.argon_p;
+    dp.keyfile       = params.keyfile;
+
+    if (verify_encryption(opt.input, opt.output, password, dp)) {
+      std::cout << colorize("[OK]", TerminalColor::GREEN) << "\n";
+    } else {
+      std::cerr << colorize("[FAIL]", TerminalColor::RED)
+                << " Verification FAILED\n";
+      return 4;
+    }
+  }
+
+  std::cout << "Encrypted: " << opt.output << "\n";
+
+  if (opt.deterministic) {
+    std::cerr << "\n"
+              << colorize("[WARNING]", TerminalColor::YELLOW, true)
+              << " File encrypted in DETERMINISTIC mode\n";
+    std::cerr << "    Re-encrypting the same file will produce IDENTICAL ciphertext\n";
+  }
+
+  // Optional deletion
+  if (opt.keep_original) {
+    std::cout << "Original kept: " << opt.input.u8string() << "\n";
+  } else {
+    std::cout << "Delete original securely? [y/N] " << std::flush;
+    std::string resp;
+    std::getline(std::cin, resp);
+    if (!resp.empty() && (resp[0] == 'y' || resp[0] == 'Y')) {
+      if (input_is_dir) {
+        auto files = collect_files(opt.input);
+        for (const auto& rel : files) {
+          secure_delete(opt.input / rel);
+        }
+        remove_directory_recursive(opt.input);
+        std::cout << "Deleted: " << opt.input.u8string() << "\n";
+      } else {
+        secure_delete(opt.input);
+      }
+    } else {
+      std::cout << "Original kept: " << opt.input.u8string() << "\n";
+    }
+  }
+
+  return 0;
+}
+
+static int handle_unlock(CliOptions opt) {
+  const bool output_was_specified = !opt.output.empty();
+  if (opt.output.empty()) {
+    opt.output = opt.input;
+    if (opt.output.extension().u8string() == ".mcc") {
+      opt.output.replace_extension();
+    } else {
+      opt.output += ".decrypted";
+    }
+  }
+  // Normalise output path by removing a trailing slash
+  if (opt.output != opt.output.root_path() && opt.output.filename().empty()) {
+    opt.output = opt.output.parent_path();
+  }
+
+  // Get password
+  SecureString password;
+  if (opt.enc_mode != EncryptionMode::KEY_ONLY) {
+    password = get_password_interactive(/*confirm=*/false);
+  }
+
+  DecryptParams params;
+  params.mode          = opt.enc_mode;
+  params.argon_time    = opt.argon_t;
+  params.argon_mem_kb  = opt.argon_m;
+  params.argon_threads = opt.argon_p;
+  params.keyfile       = opt.keyfile_data.empty() ? nullptr : &opt.keyfile_data;
+
+  ProgressBar progress(0);
+  params.progress_callback = [&progress](uint64_t bytes) {
+    progress.update(bytes);
+  };
+
+  // Step 1: decrypt into temporary file
+  std::filesystem::path tmp_dec = opt.input;
+  tmp_dec += ".dec_tmp";
+  try {
+    decrypt_file(opt.input, tmp_dec, password, params);
+    progress.finish();
+
+    // Step 2: peek first 4 bytes to detect MCDA archive magic
+    bool is_dir_archive = false;
+    {
+      std::ifstream f(tmp_dec, std::ios::binary);
+      if (f) {
+        uint8_t buf[4] = {};
+        f.read(reinterpret_cast<char*>(buf), 4);
+        if (f.gcount() == 4) {
+          uint32_t magic = static_cast<uint32_t>(buf[0]) |
+                           (static_cast<uint32_t>(buf[1]) << 8) |
+                           (static_cast<uint32_t>(buf[2]) << 16) |
+                           (static_cast<uint32_t>(buf[3]) << 24);
+          is_dir_archive = (magic == ARCHIVE_MAGIC);
+        }
+      }
+    }
+
+    // Step 3a: unpack directory archive
+    if (is_dir_archive) {
+      if (!output_was_specified) {
+        opt.output += ".restored";
+      }
+      unpack_directory(tmp_dec, opt.output);
+      std::error_code ec;
+      std::filesystem::remove(tmp_dec, ec);
+      std::cout << "Decrypted directory: " << opt.output.u8string() << "\n";
+    } else {
+      // Step 3b: plain file — rename temp to final output
+      std::error_code ec;
+      std::filesystem::rename(tmp_dec, opt.output, ec);
+      if (ec) {
+        std::filesystem::copy_file(
+            tmp_dec, opt.output,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        std::filesystem::remove(tmp_dec, ec);
+        if (ec) {
+          throw CryptoException(ErrorCode::IO_ERROR,
+                                "cannot write output: " + opt.output.u8string());
+        }
+      }
+      std::cout << "Decrypted: " << opt.output.u8string() << "\n";
+    }
+  } catch (...) {
+    std::error_code ec;
+    std::filesystem::remove(tmp_dec, ec);
+    throw;
+  }
+
+  return 0;
+}
+
+// ── main runner ───────────────────────────────────────────────────────────────
+
+static int run_cli(int argc, char** argv) {
   if (sodium_init() < 0) {
     std::cerr << "Fatal: libsodium initialization failed\n";
     return 99;
@@ -251,425 +602,105 @@ static int run_cli(int argc, char **argv) {
     }
 
     // ── Parse options ─────────────────────────────────────────────────────
-    std::filesystem::path input, output, keyfile_path, hidden_path;
-    std::string enc_mode_str = "standard";
-    bool keep_original = false;
-    bool do_verify = true;
-    bool deterministic = false;
-    uint32_t argon_t = ARGON_T_DEFAULT;
-    uint32_t argon_m = ARGON_M_DEFAULT;
-    uint32_t argon_p = ARGON_P_DEFAULT;
-    uint64_t slot_size_bytes = 16ULL * 1024ULL * 1024ULL;
+    CliOptions opt;
 
     for (int i = 2; i < argc; ++i) {
       std::string arg = argv[i];
 
       if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
-        output = path_from_cli_arg(argv[++i]);
+        opt.output = path_from_cli_arg(argv[++i]);
       } else if (arg == "--keyfile" && i + 1 < argc) {
-        keyfile_path = path_from_cli_arg(argv[++i]);
+        opt.keyfile_path = path_from_cli_arg(argv[++i]);
       } else if (arg == "--hidden" && i + 1 < argc) {
-        hidden_path = path_from_cli_arg(argv[++i]);
+        opt.hidden_path = path_from_cli_arg(argv[++i]);
       } else if (arg == "--slot-size" && i + 1 < argc) {
-        uint64_t sz = std::stoull(argv[++i]);
-        if (sz <= 64) {
-          slot_size_bytes = sz * 1024ULL * 1024ULL;
-        } else {
-          slot_size_bytes = sz;
-        }
+        if (!parse_slot_size_arg(argv[++i], opt.slot_size_bytes)) return 1;
       } else if ((arg == "--mode" || arg == "-m") && i + 1 < argc) {
-        enc_mode_str = argv[++i];
+        opt.enc_mode_str = argv[++i];
       } else if (arg == "--keep" || arg == "-k") {
-        keep_original = true;
+        opt.keep_original = true;
       } else if (arg == "--no-verify") {
-        do_verify = false;
+        opt.do_verify = false;
       } else if (arg == "--deterministic") {
-        deterministic = true;
+        opt.deterministic = true;
       } else if (arg == "--argon-time" && i + 1 < argc) {
-        argon_t = static_cast<uint32_t>(std::stoul(argv[++i]));
+        if (!parse_uint32_arg("--argon-time", argv[++i], opt.argon_t)) return 1;
       } else if (arg == "--argon-mem" && i + 1 < argc) {
-        argon_m = static_cast<uint32_t>(std::stoul(argv[++i])) * 1024;
+        uint32_t mem_mb = 0;
+        if (!parse_uint32_arg("--argon-mem", argv[++i], mem_mb)) return 1;
+        opt.argon_m = mem_mb * 1024;
       } else if (arg == "--argon-threads" && i + 1 < argc) {
-        argon_p = static_cast<uint32_t>(std::stoul(argv[++i]));
+        if (!parse_uint32_arg("--argon-threads", argv[++i], opt.argon_p)) return 1;
       } else if (arg[0] != '-') {
-        input = path_from_cli_arg(arg);
+        opt.input = path_from_cli_arg(arg);
       }
     }
 
-    if (input.empty()) {
+    if (opt.input.empty()) {
       std::cerr << "Error: no input file or directory specified\n";
       return 1;
     }
 
-    // ── container-create ──────────────────────────────────────────────────
+    // ── Fixed-slot container commands ─────────────────────────────────────
     if (cmd == "container-create") {
-      if (output.empty()) {
-        std::cerr << "Error: container-create requires --output <file>\n";
-        return 1;
-      }
-      DeniableContainerOptions opts;
-      opts.slot_size_bytes = slot_size_bytes;
-      opts.argon_time = argon_t;
-      opts.argon_mem_kb = argon_m;
-      opts.argon_threads = argon_p;
-
-      SecureString cover_pass =
-          get_password_interactive(true, "cover password");
-      if (!hidden_path.empty()) {
-        SecureString hidden_pass =
-            get_password_interactive(true, "hidden password");
-        create_deniable_container(input, &hidden_path, output, cover_pass,
-                                  &hidden_pass, opts);
-      } else {
-        create_deniable_container(input, nullptr, output, cover_pass, nullptr,
-                                  opts);
-      }
-      std::cout << colorize("[OK]", TerminalColor::GREEN)
-                << " Created container: " << output.u8string() << "\n";
-      return 0;
+      return handle_container_create(opt);
     }
-
-    // ── container-open ────────────────────────────────────────────────────
     if (cmd == "container-open") {
-      if (output.empty()) {
-        std::cerr << "Error: container-open requires --output <file>\n";
-        return 1;
-      }
-      DeniableContainerOptions opts;
-      opts.slot_size_bytes = slot_size_bytes;
-      opts.argon_time = argon_t;
-      opts.argon_mem_kb = argon_m;
-      opts.argon_threads = argon_p;
-
-      SecureString pass = get_password_interactive(false, "password");
-      open_deniable_container(input, output, pass, opts);
-      std::cout << colorize("[OK]", TerminalColor::GREEN)
-                << " Decrypted container slot to: " << output.u8string()
-                << "\n";
-      return 0;
+      return handle_container_open(opt);
     }
 
     // ── Parse encryption mode ─────────────────────────────────────────────
-    EncryptionMode enc_mode;
-    if (enc_mode_str == "standard")
-      enc_mode = EncryptionMode::STANDARD;
-    else if (enc_mode_str == "split-key")
-      enc_mode = EncryptionMode::SPLIT_KEY;
-    else if (enc_mode_str == "key-only")
-      enc_mode = EncryptionMode::KEY_ONLY;
-    else if (enc_mode_str == "headerless")
-      enc_mode = EncryptionMode::HEADERLESS;
+    if      (opt.enc_mode_str == "standard")   opt.enc_mode = EncryptionMode::STANDARD;
+    else if (opt.enc_mode_str == "split-key")  opt.enc_mode = EncryptionMode::SPLIT_KEY;
+    else if (opt.enc_mode_str == "key-only")   opt.enc_mode = EncryptionMode::KEY_ONLY;
+    else if (opt.enc_mode_str == "headerless") opt.enc_mode = EncryptionMode::HEADERLESS;
     else {
-      std::cerr << "Error: unknown mode '" << enc_mode_str << "'\n";
+      std::cerr << "Error: unknown mode '" << opt.enc_mode_str << "'\n";
       return 1;
     }
 
     // ── Load keyfile ──────────────────────────────────────────────────────
-    std::vector<uint8_t> keyfile_data;
-    if (!keyfile_path.empty()) {
-      std::ifstream kf(keyfile_path, std::ios::binary);
+    if (!opt.keyfile_path.empty()) {
+      std::ifstream kf(opt.keyfile_path, std::ios::binary);
       if (!kf) {
         throw CryptoException(ErrorCode::FILE_NOT_FOUND,
-                              "keyfile not found: " + keyfile_path.u8string());
+                              "keyfile not found: " + opt.keyfile_path.u8string());
       }
-      keyfile_data.assign(std::istreambuf_iterator<char>(kf),
-                          std::istreambuf_iterator<char>());
-      std::cout << "Using keyfile: " << keyfile_path.u8string() << "\n";
+      opt.keyfile_data.assign(std::istreambuf_iterator<char>(kf),
+                              std::istreambuf_iterator<char>());
+      std::cout << "Using keyfile: " << opt.keyfile_path.u8string() << "\n";
     }
 
     // ── Validate mode + keyfile ───────────────────────────────────────────
-    if (enc_mode == EncryptionMode::KEY_ONLY && keyfile_data.empty()) {
+    if (opt.enc_mode == EncryptionMode::KEY_ONLY && opt.keyfile_data.empty()) {
       std::cerr << "Error: KEY-ONLY mode requires --keyfile\n";
       return 1;
     }
-    if (enc_mode == EncryptionMode::SPLIT_KEY && keyfile_data.empty()) {
+    if (opt.enc_mode == EncryptionMode::SPLIT_KEY && opt.keyfile_data.empty()) {
       std::cerr << "Error: SPLIT-KEY mode requires --keyfile\n";
       return 1;
     }
 
-    // ── info ──────────────────────────────────────────────────────────────
+    // ── Dispatch commands ─────────────────────────────────────────────────
     if (cmd == "info") {
-      show_info(input);
+      show_info(opt.input);
       return 0;
     }
-
-    // ── verify encrypted file integrity ───────────────────────────────────
     if (cmd == "verify") {
-      SecureString password;
-      if (enc_mode != EncryptionMode::KEY_ONLY) {
-        password = get_password_interactive(/*confirm=*/false);
-      }
-
-      DecryptParams params;
-      params.mode = enc_mode;
-      params.argon_time = argon_t;
-      params.argon_mem_kb = argon_m;
-      params.argon_threads = argon_p;
-      params.keyfile = keyfile_data.empty() ? nullptr : &keyfile_data;
-
-      const std::filesystem::path temp_decrypt = make_verify_temp_path(input);
-      try {
-        // Decrypting the complete stream verifies every authentication tag.
-        decrypt_file(input, temp_decrypt, password, params);
-        secure_delete(temp_decrypt);
-      } catch (...) {
-        secure_delete(temp_decrypt);
-        throw;
-      }
-
-      std::cout << colorize("[OK]", TerminalColor::GREEN)
-                << " Integrity verified: " << input.u8string() << "\n";
-      return 0;
+      return handle_verify(opt);
     }
-
-    // ── lock (encrypt) ────────────────────────────────────────────────────
     if (cmd == "lock") {
-      const bool input_is_dir = minicrypto::is_directory(input);
-      const bool output_was_specified = !output.empty();
-
-      if (output.empty()) {
-        // Strip trailing slash for directories
-        std::filesystem::path base = input;
-        while (base != base.root_path() && base.filename().empty()) {
-          base = base.parent_path();
-        }
-        output = base;
-        output += ".mcc";
-      }
-
-      if (input_is_dir && !output_was_specified) {
-        warn("default archive path is next to the source directory: " +
-             output.u8string() + "; use --output to choose another location");
-      }
-
-      std::cout << "Input    : " << input.u8string()
-                << (input_is_dir ? " (directory)" : " (file)") << "\n";
-      std::cout << "Output   : " << output.u8string() << "\n";
-      std::cout << "Mode     : " << enc_mode_str;
-      if (deterministic)
-        std::cout << " (DETERMINISTIC)";
-      std::cout << "\n";
-      std::cout << "Argon2   : t=" << argon_t << ", m=" << (argon_m / 1024)
-                << "MB"
-                << ", p=" << argon_p << "\n";
-
-      // Get password
-      SecureString password;
-      if (enc_mode != EncryptionMode::KEY_ONLY) {
-        password = get_password_interactive(/*confirm=*/true);
-      }
-
-      // Build params
-      EncryptParams params;
-      params.mode = enc_mode;
-      params.argon_time = argon_t;
-      params.argon_mem_kb = argon_m;
-      params.argon_threads = argon_p;
-      params.keyfile = keyfile_data.empty() ? nullptr : &keyfile_data;
-      params.deterministic_salt = deterministic;
-      if (deterministic) {
-        params.deterministic_confirm_callback = deterministic_confirmation;
-      }
-
-      // Calculate total source size before packing so directory encryption
-      // can use the same progress bar as single-file encryption.
-      uint64_t total_size = 0;
-      if (input_is_dir) {
-        const std::filesystem::path base(input);
-        for (const auto &rel : collect_files(input)) {
-          std::error_code ec;
-          const uintmax_t file_size =
-              std::filesystem::file_size(base / rel, ec);
-          if (ec) {
-            throw CryptoException(
-                ErrorCode::IO_ERROR,
-                "cannot determine file size: " + (base / rel).u8string() +
-                    " (" + ec.message() + ")");
-          }
-          if (file_size > std::numeric_limits<uint64_t>::max() - total_size) {
-            throw CryptoException(
-                ErrorCode::IO_ERROR,
-                "total directory size exceeds supported range: " +
-                    input.u8string());
-          }
-          total_size += static_cast<uint64_t>(file_size);
-        }
-      } else {
-        std::ifstream sz(input, std::ios::binary);
-        sz.seekg(0, std::ios::end);
-        total_size = static_cast<uint64_t>(sz.tellg());
-      }
-      ProgressBar progress(total_size);
-      params.progress_callback = [&progress](uint64_t bytes) {
-        progress.update(bytes);
-      };
-
-      // Encrypt
-      if (input_is_dir) {
-        encrypt_directory(input, output, password, params);
-      } else {
-        encrypt_file(input, output, password, params);
-      }
-      progress.finish();
-
-      // Verify (only for single files — directory archives are always verified
-      // by the encrypt_directory pipeline itself)
-      if (do_verify && !input_is_dir) {
-        std::cout << "Verifying encryption... " << std::flush;
-
-        DecryptParams dp;
-        dp.mode = enc_mode;
-        dp.argon_time = argon_t;
-        dp.argon_mem_kb = argon_m;
-        dp.argon_threads = argon_p;
-        dp.keyfile = params.keyfile;
-
-        if (verify_encryption(input, output, password, dp)) {
-          std::cout << colorize("[OK]", TerminalColor::GREEN) << "\n";
-        } else {
-          std::cerr << colorize("[FAIL]", TerminalColor::RED)
-                    << " Verification FAILED\n";
-          return 4;
-        }
-      }
-
-      std::cout << "Encrypted: " << output << "\n";
-
-      if (deterministic) {
-        std::cerr << "\n"
-                  << colorize("[WARNING]", TerminalColor::YELLOW, true)
-                  << " File encrypted in DETERMINISTIC mode\n";
-        std::cerr << "    Re-encrypting the same file will produce IDENTICAL "
-                     "ciphertext\n";
-      }
-
-      // Optional deletion
-      if (keep_original) {
-        std::cout << "Original kept: " << input.u8string() << "\n";
-      } else {
-        std::cout << "Delete original securely? [y/N] " << std::flush;
-        std::string resp;
-        std::getline(std::cin, resp);
-        if (!resp.empty() && (resp[0] == 'y' || resp[0] == 'Y')) {
-          if (input_is_dir) {
-            // Shred all files, then remove empty directory skeleton
-            auto files = collect_files(input);
-            for (const auto &rel : files) {
-              secure_delete(input / rel);
-            }
-            remove_directory_recursive(input);
-            std::cout << "Deleted: " << input.u8string() << "\n";
-          } else {
-            secure_delete(input);
-          }
-        } else {
-          std::cout << "Original kept: " << input.u8string() << "\n";
-        }
-      }
-
-      return 0;
+      return handle_lock(opt);
     }
-
-    // ── unlock (decrypt) ──────────────────────────────────────────────────
     if (cmd == "unlock") {
-      const bool output_was_specified = !output.empty();
-      if (output.empty()) {
-        // Default output: strip .mcc suffix, otherwise append .decrypted
-        output = input;
-        if (output.extension().u8string() == ".mcc") {
-          output.replace_extension();
-        } else {
-          output += ".decrypted";
-        }
-      }
-      // Normalise output path by removing a trailing slash.
-      if (output != output.root_path() && output.filename().empty()) {
-        output = output.parent_path();
-      }
-
-      // Get password
-      SecureString password;
-      if (enc_mode != EncryptionMode::KEY_ONLY) {
-        password = get_password_interactive(/*confirm=*/false);
-      }
-
-      // Build params
-      DecryptParams params;
-      params.mode = enc_mode;
-      params.argon_time = argon_t;
-      params.argon_mem_kb = argon_m;
-      params.argon_threads = argon_p;
-      params.keyfile = keyfile_data.empty() ? nullptr : &keyfile_data;
-
-      ProgressBar progress(0); // plaintext size unknown until header is read
-      params.progress_callback = [&progress](uint64_t bytes) {
-        progress.update(bytes);
-      };
-
-      // Step 1: decrypt into a temporary file
-      std::filesystem::path tmp_dec = input;
-      tmp_dec += ".dec_tmp";
-      try {
-        decrypt_file(input, tmp_dec, password, params);
-        progress.finish();
-
-        // Step 2: peek first 4 bytes to detect MCDA archive magic
-        bool is_dir_archive = false;
-        {
-          std::ifstream f(tmp_dec, std::ios::binary);
-          if (f) {
-            uint8_t buf[4] = {};
-            f.read(reinterpret_cast<char *>(buf), 4);
-            if (f.gcount() == 4) {
-              uint32_t magic = static_cast<uint32_t>(buf[0]) |
-                               (static_cast<uint32_t>(buf[1]) << 8) |
-                               (static_cast<uint32_t>(buf[2]) << 16) |
-                               (static_cast<uint32_t>(buf[3]) << 24);
-              is_dir_archive = (magic == ARCHIVE_MAGIC);
-            }
-          }
-        }
-
-        // Step 3a: unpack directory archive
-        if (is_dir_archive) {
-          if (!output_was_specified) {
-            output += ".restored";
-          }
-          unpack_directory(tmp_dec, output);
-          std::error_code ec;
-          std::filesystem::remove(tmp_dec, ec);
-          std::cout << "Decrypted directory: " << output.u8string() << "\n";
-        } else {
-          // Step 3b: plain file — rename temp to final output
-          std::error_code ec;
-          std::filesystem::rename(tmp_dec, output, ec);
-          if (ec) {
-            // Cross-device rename fallback
-            std::filesystem::copy_file(
-                tmp_dec, output,
-                std::filesystem::copy_options::overwrite_existing, ec);
-            std::filesystem::remove(tmp_dec, ec);
-            if (ec)
-              throw CryptoException(ErrorCode::IO_ERROR,
-                                    "cannot write output: " +
-                                        output.u8string());
-          }
-          std::cout << "Decrypted: " << output.u8string() << "\n";
-        }
-      } catch (...) {
-        std::error_code ec;
-        std::filesystem::remove(tmp_dec, ec);
-        throw;
-      }
-
-      return 0;
+      return handle_unlock(opt);
     }
 
     std::cerr << "Error: unknown command '" << cmd << "'\n";
     show_usage();
     return 1;
 
-  } catch (const CryptoException &e) {
+  } catch (const CryptoException& e) {
     std::cerr << "\n[ERROR] ";
     switch (e.get_code()) {
     case ErrorCode::FILE_NOT_FOUND:
@@ -698,7 +729,7 @@ static int run_cli(int argc, char **argv) {
       std::cerr << "Error: " << e.what() << "\n";
       return 99;
     }
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     std::cerr << "\n[FATAL] " << e.what() << "\n";
     return 99;
   }
@@ -707,11 +738,10 @@ static int run_cli(int argc, char **argv) {
 }
 
 #ifdef _WIN32
-static bool wide_to_utf8(const wchar_t *value, std::string &result) {
+static bool wide_to_utf8(const wchar_t* value, std::string& result) {
   const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value,
                                            -1, nullptr, 0, nullptr, nullptr);
-  if (required <= 0)
-    return false;
+  if (required <= 0) return false;
 
   result.resize(static_cast<size_t>(required));
   if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, -1,
@@ -722,9 +752,9 @@ static bool wide_to_utf8(const wchar_t *value, std::string &result) {
   return true;
 }
 
-int wmain(int argc, wchar_t **argv) {
+int wmain(int argc, wchar_t** argv) {
   std::vector<std::string> utf8_args(static_cast<size_t>(argc));
-  std::vector<char *> narrow_argv;
+  std::vector<char*> narrow_argv;
   narrow_argv.reserve(static_cast<size_t>(argc));
   for (int i = 0; i < argc; ++i) {
     if (!wide_to_utf8(argv[i], utf8_args[static_cast<size_t>(i)])) {
@@ -732,10 +762,11 @@ int wmain(int argc, wchar_t **argv) {
       return 99;
     }
   }
-  for (auto &arg : utf8_args)
-    narrow_argv.push_back(arg.data());
+  for (auto& arg : utf8_args) narrow_argv.push_back(arg.data());
   return run_cli(argc, narrow_argv.data());
 }
 #else
-int main(int argc, char **argv) { return run_cli(argc, argv); }
+int main(int argc, char** argv) {
+  return run_cli(argc, argv);
+}
 #endif
