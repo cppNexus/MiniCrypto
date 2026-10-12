@@ -42,23 +42,23 @@ static int g_tests_failed = 0;
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
-static void write_file(const std::string &path, const std::string &content) {
+static void write_file(const std::filesystem::path &path, const std::string &content) {
   std::ofstream f(path, std::ios::binary);
   f.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
 
-static std::string read_file(const std::string &path) {
+static std::string read_file(const std::filesystem::path &path) {
   std::ifstream f(path, std::ios::binary);
   return std::string((std::istreambuf_iterator<char>(f)),
                      std::istreambuf_iterator<char>());
 }
 
-static void remove_file(const std::string &path) {
+static void remove_file(const std::filesystem::path &path) {
   std::error_code ec;
   std::filesystem::remove(path, ec);
 }
 
-static void remove_rf(const std::string &path) {
+static void remove_rf(const std::filesystem::path &path) {
   remove_directory_recursive(path);
   remove_file(path);
 }
@@ -745,8 +745,8 @@ static void test_deniable_container_cover_and_hidden() {
   std::filesystem::path out_cover = "test_deniable_out_cov.tmp";
   std::filesystem::path out_hidden = "test_deniable_out_hid.tmp";
 
-  write_file(cover_path.string(), "Public innocuous document");
-  write_file(hidden_path.string(), "Super confidential hidden payload");
+  write_file(cover_path, "Public innocuous document");
+  write_file(hidden_path, "Super confidential hidden payload");
 
   SecureString cover_pass("coverpass", 9);
   SecureString hidden_pass("hiddenpass", 10);
