@@ -50,6 +50,18 @@ minicrypto unlock secret.txt.mcc
 # Check that an encrypted file decrypts and its stream tags are valid
 minicrypto verify secret.txt.mcc
 
+# Show metadata of an encrypted file (format, mode, size, KDF params)
+minicrypto info secret.txt.mcc
+
+# Keep source files without interactive deletion prompt
+minicrypto lock secret.txt --keep
+
+# Skip post-encryption verification
+minicrypto lock secret.txt --no-verify
+
+# Custom Argon2id memory in MB (e.g. 256 MB)
+minicrypto lock secret.txt --argon-mem 256
+
 # Encrypt an entire directory
 minicrypto lock my_project/
 # -> my_project.mcc
@@ -62,6 +74,12 @@ minicrypto unlock my_project.mcc
 # Password + keyfile
 minicrypto lock secret.txt --mode split-key --keyfile usb.key
 minicrypto unlock secret.txt.mcc --mode split-key --keyfile usb.key
+
+# Create experimental fixed-slot container
+minicrypto container-create cover.txt --hidden secret.txt --output vault.bin
+
+# Open fixed-slot container
+minicrypto container-open vault.bin --output restored.txt
 ```
 
 ## Encryption Modes
@@ -71,6 +89,9 @@ minicrypto unlock secret.txt.mcc --mode split-key --keyfile usb.key
 ```bash
 # Encrypt a file
 minicrypto lock secret.txt
+
+# Encrypt with explicit memory parameter (in MB)
+minicrypto lock secret.txt --argon-mem 256
 
 # Encrypt an entire directory
 minicrypto lock ~/Documents/project
@@ -83,9 +104,12 @@ minicrypto unlock project.mcc --output ./project/
 ```
 
 - Password → Argon2id (random 32-byte salt) → key
-- Defaults: 3 iterations, 128 MiB memory, 2 threads
+- Defaults: 3 iterations, 128 MiB memory (`--argon-mem 128`, specified in MB), 2 threads
 - Normal v2 file: an open header (mode, KDF parameters, plaintext size) followed by the encrypted stream
 - The header fields are **not** authenticated as AEAD associated data; only the encrypted chunks are
+- Use `--keep` to preserve the original file/directory without asking to shred it
+- Use `--no-verify` to bypass the post-encryption verification check
+- Use `minicrypto info <file>` to inspect the v2 header metadata
 
 `verify` decrypts the stream into a temporary file to check the secretstream tags, then
 attempts to securely delete that temporary file (best-effort). It does not prove the file
@@ -138,20 +162,27 @@ minicrypto lock backup.tar --deterministic
   can be tested by comparing ciphertexts
 - Requires explicit interactive confirmation (`I UNDERSTAND THE RISKS`)
 - Intended for cases such as backup deduplication where that leakage is acceptable
-- See [DETERMINISTIC_WARN.txt](DETERMINISTIC_WARN.txt)
+- See [docs/DETERMINISTIC_WARN.txt](docs/DETERMINISTIC_WARN.txt)
 
 ### Experimental: fixed-slot container
 
 ```bash
-minicrypto container-create ...
-minicrypto container-open ...
+# Create a container with cover and hidden slots (default slot size: 16 MB each)
+minicrypto container-create cover.txt --hidden secret.txt --output vault.bin
+
+# Create with custom slot size in MB (1–64 MB) and Argon2id settings (--argon-mem in MB)
+minicrypto container-create cover.txt --output vault.bin --slot-size 32 --argon-time 4 --argon-mem 128
+
+# Open a container (tests both slots; payload size inside slot is hidden)
+minicrypto container-open vault.bin --output restored.txt
 ```
 
-A prototype with two equal-size slots (Argon2id, BLAKE2b role key, XChaCha20-Poly1305-IETF AEAD).
-It is **not** a verified deniability guarantee, has no external audit, and does not protect against
-multiple snapshots, observation of the process, or coercion. Do not keep the only copy of
-important data in this format. See [docs/SECURITY.md](docs/SECURITY.md) for details and
-command options.
+A prototype with two equal-size slots (1–64 MiB, default 16 MiB per slot) using Argon2id, a BLAKE2b role key, and XChaCha20-Poly1305-IETF AEAD. An unused hidden slot is filled with indistinguishable CSPRNG bytes.
+
+- **Hidden payload size**: Each slot has a fixed capacity. The actual plaintext length is stored within the encrypted payload and padded with CSPRNG random bytes up to the full slot size. The outer container size is always `2 * slot_size`, hiding the actual payload size.
+- **Argon2id container limits**: Supports memory up to 256 MiB (`--argon-mem`, max 256), iterations ≤ 20 (`--argon-time`, max 20), and parallelism ≤ 16 threads (`--argon-threads`, max 16). KDF parameters are not stored in any header, so opening requires the matching parameters used at creation.
+- **Both slots tested**: `container-open` always evaluates both slots without revealing which matched; wrong password and authentication failure return the identical error.
+- **Limitations**: It is **not** a verified deniability guarantee, has no external audit, and does not protect against multiple snapshots over time, observation of the process, or coercion. Do not keep the only copy of important data in this format. See [docs/SECURITY.md](docs/SECURITY.md) for details.
 
 ## Architecture
 
@@ -288,6 +319,31 @@ decrypt_directory("my_folder.mcc", "restored_folder", password, dec_params);
 
 Directory unpacking writes files sequentially; it is not a transaction, and files written
 before an error may remain on disk.
+
+### Example: Fixed-Slot Container (Deniable API)
+
+```cpp
+#include <minicrypto/core/deniable.h>
+
+using namespace minicrypto;
+
+DeniableContainerOptions opts;
+opts.slot_size_bytes = 16ULL * 1024ULL * 1024ULL; // 1-64 MiB (default: 16 MiB)
+opts.argon_time = 3;                              // <= 20 iterations
+opts.argon_mem_kb = 128 * 1024;                   // <= 256 MiB (in KB)
+opts.argon_threads = 2;                           // <= 16 threads
+
+SecureString cover_pass("cover_password", 14);
+SecureString hidden_pass("hidden_password", 15);
+std::filesystem::path hidden_file = "hidden.txt";
+
+// Create container with cover and hidden slots (payload size inside is hidden)
+create_deniable_container("cover.txt", &hidden_file, "vault.bin",
+                          cover_pass, &hidden_pass, opts);
+
+// Open container (matches whichever slot decrypts with the supplied password)
+open_deniable_container("vault.bin", "extracted.txt", cover_pass, opts);
+```
 
 ## Security Features and Limits
 

@@ -1,4 +1,5 @@
 #include "../core/crypto.h"
+#include "../core/deniable.h"
 #include "../core/dir_ops.h"
 #include "../core/format.h"
 #include "../core/file_ops.h"
@@ -28,19 +29,25 @@ MiniCrypto v1.1 — Secure file & directory encryption
 USAGE:
   minicrypto lock   <file|dir>   Encrypt file or directory
   minicrypto unlock <file>       Decrypt file (or directory archive)
-    minicrypto verify <file>        Verify encrypted file integrity
+  minicrypto verify <file>       Verify encrypted file integrity
   minicrypto info   <file>       Show encrypted-file metadata
+  minicrypto container-create <cover> --output <container> [--hidden <hidden>]
+                                 Create experimental fixed-slot container
+  minicrypto container-open   <container> --output <output>
+                                 Open matching fixed-slot container slot
   minicrypto test                Run built-in self-tests
 
 ENCRYPTION MODES:
   --mode standard      [DEFAULT] Password only
   --mode split-key     Password + keyfile (both required)
   --mode key-only      Keyfile only (no password)
-  --mode headerless    Minimal header, derived nonce
+  --mode headerless    Minimal header, raw stream
 
 OPTIONS:
   --output <path>       Output file (or directory for unlock of dir archive)
   --keyfile <file>      Key file path
+  --hidden <file>       Hidden slot input file for container-create
+  --slot-size <mb>      Slot size in MB for container-create (1-64, default: 16)
   --keep                Keep source file/directory after encryption
   --no-verify           Skip post-encryption verification
   --argon-time <n>      Argon2 iterations (default: 3)
@@ -50,8 +57,7 @@ OPTIONS:
 DANGEROUS OPTIONS:
   --deterministic       [WARNING] FOOTGUN: Deterministic encryption
                         Same file + password = same ciphertext.
-                        Leaks equality of plaintexts!
-                        You LOSE IND-CPA security!
+                        Leaks equality of plaintexts and links between copies!
                         Requires explicit confirmation.
 
 EXAMPLES:
@@ -64,8 +70,11 @@ EXAMPLES:
   # Decrypt a directory archive back to a folder
   minicrypto unlock project.mcc --output ./project_restored
 
-    # Verify an encrypted backup without keeping decrypted output
-    minicrypto verify backup.mcc
+  # Verify an encrypted backup without keeping decrypted output
+  minicrypto verify backup.mcc
+
+  # Show file metadata
+  minicrypto info secret.txt.mcc
 
   # Split-key mode (password + keyfile)
   minicrypto lock secret.txt --mode split-key --keyfile ~/usb.key
@@ -73,19 +82,25 @@ EXAMPLES:
   # Key-only mode (no password, keyfile only)
   minicrypto lock secret.txt --mode key-only --keyfile ~/master.key
 
-  # Headerless mode (steganography-friendly)
+  # Headerless mode (minimal header)
   minicrypto lock secret.txt --mode headerless
+
+  # Create fixed-slot container (experimental)
+  minicrypto container-create cover.txt --hidden secret.txt --output vault.bin
+
+  # Open fixed-slot container
+  minicrypto container-open vault.bin --output extracted.txt
 
   # Deterministic mode (DANGEROUS — deduplication only)
   minicrypto lock backup.tar --deterministic
 
 SECURITY:
-  - XChaCha20-Poly1305 (libsodium secretstream)
+  - XChaCha20-Poly1305 stream encryption
   - Argon2id key derivation
-  - Authenticated encryption (AEAD)
-  - Memory locking (mlock) for sensitive data
-  - Atomic writes (write-then-rename)
-  - Secure deletion (3-pass overwrite)
+  - Authenticated chunk encryption (AEAD per chunk; header fields unauthenticated)
+  - Memory locking (mlock) for sensitive buffers (best-effort)
+  - Best-effort atomic writes (write-then-rename)
+  - Secure deletion (3-pass overwrite, best-effort)
 
 )" << std::flush;
 }
@@ -112,7 +127,7 @@ static void show_info(const std::filesystem::path& path) {
                 std::cout << "KEY-ONLY (keyfile only)\n";
                 break;
             case EncryptionMode::HEADERLESS:
-                std::cout << "HEADERLESS (derived nonce)\n";
+                std::cout << "HEADERLESS (minimal header)\n";
                 break;
             }
             std::cout << "  Original size  : " << meta.plaintext_size << " bytes\n";
@@ -142,7 +157,7 @@ static bool deterministic_confirmation() {
     std::cerr << "This mode produces IDENTICAL ciphertext for identical plaintext + password.\n";
     std::cerr << "\n";
     std::cerr << "SECURITY IMPLICATIONS:\n";
-    std::cerr << "  • You LOSE IND-CPA security\n";
+    std::cerr << "  • Leaks equality of plaintexts and links between copies\n";
     std::cerr << "  • Attackers CAN detect duplicate files\n";
     std::cerr << "  • Attackers CAN perform equality testing\n";
     std::cerr << "  • Known-plaintext attacks are EASIER\n";
@@ -223,7 +238,7 @@ static int run_cli(int argc, char** argv) {
         }
 
         // ── Parse options ─────────────────────────────────────────────────────
-        std::filesystem::path input, output, keyfile_path;
+        std::filesystem::path input, output, keyfile_path, hidden_path;
         std::string enc_mode_str = "standard";
         bool keep_original = false;
         bool do_verify     = true;
@@ -231,12 +246,22 @@ static int run_cli(int argc, char** argv) {
         uint32_t argon_t   = ARGON_T_DEFAULT;
         uint32_t argon_m   = ARGON_M_DEFAULT;
         uint32_t argon_p   = ARGON_P_DEFAULT;
+        uint64_t slot_size_bytes = 16ULL * 1024ULL * 1024ULL;
 
         for (int i = 2; i < argc; ++i) {
             std::string arg = argv[i];
 
             if      ((arg == "--output" || arg == "-o")  && i+1 < argc) { output       = path_from_cli_arg(argv[++i]); }
             else if (arg == "--keyfile"                  && i+1 < argc) { keyfile_path = path_from_cli_arg(argv[++i]); }
+            else if (arg == "--hidden"                   && i+1 < argc) { hidden_path  = path_from_cli_arg(argv[++i]); }
+            else if (arg == "--slot-size"                && i+1 < argc) {
+                uint64_t sz = std::stoull(argv[++i]);
+                if (sz <= 64) {
+                    slot_size_bytes = sz * 1024ULL * 1024ULL;
+                } else {
+                    slot_size_bytes = sz;
+                }
+            }
             else if ((arg == "--mode"   || arg == "-m")  && i+1 < argc) { enc_mode_str = argv[++i]; }
             else if (arg == "--keep"    || arg == "-k")                 { keep_original = true;      }
             else if (arg == "--no-verify")                              { do_verify    = false;      }
@@ -250,6 +275,49 @@ static int run_cli(int argc, char** argv) {
         if (input.empty()) {
             std::cerr << "Error: no input file or directory specified\n";
             return 1;
+        }
+
+        // ── container-create ──────────────────────────────────────────────────
+        if (cmd == "container-create") {
+            if (output.empty()) {
+                std::cerr << "Error: container-create requires --output <file>\n";
+                return 1;
+            }
+            DeniableContainerOptions opts;
+            opts.slot_size_bytes = slot_size_bytes;
+            opts.argon_time      = argon_t;
+            opts.argon_mem_kb    = argon_m;
+            opts.argon_threads   = argon_p;
+
+            SecureString cover_pass = get_password_interactive(true, "cover password");
+            if (!hidden_path.empty()) {
+                SecureString hidden_pass = get_password_interactive(true, "hidden password");
+                create_deniable_container(input, &hidden_path, output, cover_pass, &hidden_pass, opts);
+            } else {
+                create_deniable_container(input, nullptr, output, cover_pass, nullptr, opts);
+            }
+            std::cout << colorize("[OK]", TerminalColor::GREEN)
+                      << " Created container: " << output.u8string() << "\n";
+            return 0;
+        }
+
+        // ── container-open ────────────────────────────────────────────────────
+        if (cmd == "container-open") {
+            if (output.empty()) {
+                std::cerr << "Error: container-open requires --output <file>\n";
+                return 1;
+            }
+            DeniableContainerOptions opts;
+            opts.slot_size_bytes = slot_size_bytes;
+            opts.argon_time      = argon_t;
+            opts.argon_mem_kb    = argon_m;
+            opts.argon_threads   = argon_p;
+
+            SecureString pass = get_password_interactive(false, "password");
+            open_deniable_container(input, output, pass, opts);
+            std::cout << colorize("[OK]", TerminalColor::GREEN)
+                      << " Decrypted container slot to: " << output.u8string() << "\n";
+            return 0;
         }
 
         // ── Parse encryption mode ─────────────────────────────────────────────

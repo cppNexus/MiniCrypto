@@ -1,4 +1,5 @@
 #include "core/crypto.h"
+#include "core/deniable.h"
 #include "core/dir_ops.h"
 #include "core/format.h"
 #include "core/keygen.h"
@@ -640,6 +641,82 @@ void test_unicode_filesystem_paths() {
     fs::remove(decrypted);
 }
 
+static void test_deniable_container_cover_only() {
+    std::string cover_path = "test_deniable_cover.tmp";
+    std::string container_path = "test_deniable_container1.tmp";
+    std::string out_path = "test_deniable_out1.tmp";
+
+    write_file(cover_path, "Secret cover content here 12345");
+
+    SecureString cover_pass("coverpass123", 12);
+    DeniableContainerOptions opts;
+    opts.slot_size_bytes = 1024 * 1024; // 1 MB
+    opts.argon_time = 1;
+    opts.argon_mem_kb = 8192; // 8 MB (minimum valid)
+    opts.argon_threads = 1;
+
+    create_deniable_container(cover_path, nullptr, container_path, cover_pass, nullptr, opts);
+
+    // Verify container file size is exactly 2 * slot_size_bytes (payload size hidden)
+    std::error_code ec;
+    TEST_ASSERT(std::filesystem::file_size(container_path, ec) == 2 * opts.slot_size_bytes,
+                "Container size is exactly 2 * slot_size");
+
+    // Open with correct password
+    open_deniable_container(container_path, out_path, cover_pass, opts);
+    TEST_ASSERT(read_file(out_path) == "Secret cover content here 12345",
+                "Cover slot roundtrip matches");
+
+    // Open with wrong password -> throws AUTH_FAILED
+    bool failed = false;
+    try {
+        SecureString wrong_pass("wrongpassword", 13);
+        open_deniable_container(container_path, out_path, wrong_pass, opts);
+    } catch (const CryptoException& e) {
+        if (e.get_code() == ErrorCode::AUTH_FAILED) failed = true;
+    }
+    TEST_ASSERT(failed, "Wrong password throws AUTH_FAILED");
+
+    remove_file(cover_path);
+    remove_file(container_path);
+    remove_file(out_path);
+}
+
+static void test_deniable_container_cover_and_hidden() {
+    std::filesystem::path cover_path = "test_deniable_cover2.tmp";
+    std::filesystem::path hidden_path = "test_deniable_hidden2.tmp";
+    std::filesystem::path container_path = "test_deniable_container2.tmp";
+    std::filesystem::path out_cover = "test_deniable_out_cov.tmp";
+    std::filesystem::path out_hidden = "test_deniable_out_hid.tmp";
+
+    write_file(cover_path.string(), "Public innocuous document");
+    write_file(hidden_path.string(), "Super confidential hidden payload");
+
+    SecureString cover_pass("coverpass", 9);
+    SecureString hidden_pass("hiddenpass", 10);
+    DeniableContainerOptions opts;
+    opts.slot_size_bytes = 1024 * 1024; // 1 MB
+    opts.argon_time = 1;
+    opts.argon_mem_kb = 8192;
+    opts.argon_threads = 1;
+
+    create_deniable_container(cover_path, &hidden_path, container_path, cover_pass, &hidden_pass, opts);
+
+    // Opening with cover_pass yields cover payload
+    open_deniable_container(container_path, out_cover, cover_pass, opts);
+    TEST_ASSERT(read_file(out_cover) == "Public innocuous document", "Cover decrypted correctly");
+
+    // Opening with hidden_pass yields hidden payload
+    open_deniable_container(container_path, out_hidden, hidden_pass, opts);
+    TEST_ASSERT(read_file(out_hidden) == "Super confidential hidden payload", "Hidden decrypted correctly");
+
+    remove_file(cover_path);
+    remove_file(hidden_path);
+    remove_file(container_path);
+    remove_file(out_cover);
+    remove_file(out_hidden);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -669,6 +746,8 @@ int main() {
     RUN_TEST(test_archive_path_length_limit);
     RUN_TEST(test_unicode_filesystem_paths);
     RUN_TEST(test_atomic_file);
+    RUN_TEST(test_deniable_container_cover_only);
+    RUN_TEST(test_deniable_container_cover_and_hidden);
 
     std::cout << "========================================\n";
     std::cout << "Results: " << g_tests_passed << " passed, "

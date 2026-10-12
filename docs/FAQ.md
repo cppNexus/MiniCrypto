@@ -11,7 +11,7 @@ Normal file modes: libsodium crypto_secretstream_xchacha20poly1305 for a stream 
 STANDARD: Argon2id with a salt; defaults are 3 iterations, 128 MiB memory, 2 threads.
 SPLIT-KEY: Argon2id takes the concatenation of the password bytes and the keyfile.
 KEY-ONLY: plain BLAKE2b-256 over the keyfile bytes, the salt, and the context. This is neither HKDF nor a password KDF; a short or predictable keyfile can be brute-forced.
-The new fixed-slot prototype: Argon2id, BLAKE2b for separating keys per slot, and libsodium XChaCha20-Poly1305-IETF AEAD.
+The new fixed-slot prototype: Argon2id (up to 256 MiB memory, ≤ 20 iterations, ≤ 16 threads; defaults: 3 iterations, 128 MiB, 2 threads), BLAKE2b for separating keys per slot, and libsodium XChaCha20-Poly1305-IETF AEAD.
 Does the program make network requests?
 
 In the current sources, MiniCrypto does not implement network communication, telemetry, or auto-update. This is a description of the code, not a guarantee of the behavior of a third-party build, the OS, or dependencies.
@@ -44,7 +44,13 @@ If the plaintext, password, mode, keyfile, and KDF parameters match, the contain
 
 Experimental Fixed-Slot Container
 
-container-create / container-open create and open a separate container made of two slots of the same chosen length. The second slot is either encrypted or filled with random bytes. This is an experimental implementation without an independent audit; external review is not a condition of the project and is not planned. The code is open, and users can review it themselves or commission an audit.
+The `container-create` and `container-open` CLI commands (and the library functions `create_deniable_container` / `open_deniable_container`) create and open an experimental container made of two slots of the same chosen length (1–64 MiB via `--slot-size`, default 16 MiB per slot). The second slot is either encrypted (if `--hidden` is provided) or filled with random CSPRNG bytes.
+
+The payload size inside each slot is hidden: each slot occupies its full allocated size on disk, with unused capacity filled with CSPRNG bytes. Outer file size (`2 * slot_size`) reveals only the container capacity, not the payload size.
+
+Argon2id parameters are configurable up to 256 MiB memory (`--argon-mem`), ≤ 20 iterations (`--argon-time`), and ≤ 16 threads (`--argon-threads`). Opening requires the matching KDF parameters used at creation.
+
+This is an experimental implementation without an independent audit; external review is not a condition of the project and is not planned. The code is open, and users can review it themselves or commission an audit.
 
 The prototype does not protect against multiple snapshots, observation of input or of the program’s execution, file and process metadata, or coercion to disclose all passwords. Equal slot size by itself does not prove their cryptographic indistinguishability. Use is at the user’s own risk; do not keep the only copy of important data in this format.
 
