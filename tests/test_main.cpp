@@ -1,758 +1,817 @@
 #include "core/crypto.h"
 #include "core/deniable.h"
 #include "core/dir_ops.h"
-#include "core/format.h"
-#include "core/keygen.h"
-#include "core/secure_memory.h"
 #include "core/file_ops.h"
+#include "core/format.h"
+#include "core/secure_memory.h"
 
-#include <sodium.h>
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
 #include <cassert>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sodium.h>
+#include <string>
+#include <vector>
 
 using namespace minicrypto;
 
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
 
-#define TEST_ASSERT(cond, msg) \
-    do { \
-        if (!(cond)) { \
-            std::cerr << "  FAILED: " << msg << " (" << __FILE__ << ":" << __LINE__ << ")\n"; \
-            g_tests_failed++; \
-            return; \
-        } \
-    } while (0)
+#define TEST_ASSERT(cond, msg)                                                 \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      std::cerr << "  FAILED: " << msg << " (" << __FILE__ << ":" << __LINE__  \
+                << ")\n";                                                      \
+      g_tests_failed++;                                                        \
+      return;                                                                  \
+    }                                                                          \
+  } while (0)
 
-#define RUN_TEST(fn) \
-    do { \
-        std::cout << "[TEST] Running " << #fn << "..." << std::flush; \
-        int before_fail = g_tests_failed; \
-        fn(); \
-        if (g_tests_failed == before_fail) { \
-            std::cout << " \033[32mPASSED\033[0m\n"; \
-            g_tests_passed++; \
-        } \
-    } while (0)
+#define RUN_TEST(fn)                                                           \
+  do {                                                                         \
+    std::cout << "[TEST] Running " << #fn << "..." << std::flush;              \
+    int before_fail = g_tests_failed;                                          \
+    fn();                                                                      \
+    if (g_tests_failed == before_fail) {                                       \
+      std::cout << " \033[32mPASSED\033[0m\n";                                 \
+      g_tests_passed++;                                                        \
+    }                                                                          \
+  } while (0)
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
-static void write_file(const std::string& path, const std::string& content) {
-    std::ofstream f(path, std::ios::binary);
-    f.write(content.data(), static_cast<std::streamsize>(content.size()));
+static void write_file(const std::string &path, const std::string &content) {
+  std::ofstream f(path, std::ios::binary);
+  f.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
 
-static std::string read_file(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    return std::string((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+static std::string read_file(const std::string &path) {
+  std::ifstream f(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(f)),
+                     std::istreambuf_iterator<char>());
 }
 
-static void remove_file(const std::string& path) {
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
+static void remove_file(const std::string &path) {
+  std::error_code ec;
+  std::filesystem::remove(path, ec);
 }
 
-static void remove_rf(const std::string& path) {
-    remove_directory_recursive(path);
-    remove_file(path);
+static void remove_rf(const std::string &path) {
+  remove_directory_recursive(path);
+  remove_file(path);
 }
 
-// ── Test Cases ────────────────────────────────────────────────────────────────
+// ── Test Cases
+// ────────────────────────────────────────────────────────────────
 
 void test_secure_memory() {
-    // SecureBuffer
-    {
-        SecureBuffer buf(64);
-        TEST_ASSERT(buf.data() != nullptr, "buffer data must not be null");
-        TEST_ASSERT(buf.size() == 64, "buffer size must be 64");
-        std::memset(buf.data(), 0xAA, 64);
-        TEST_ASSERT(buf.data()[0] == 0xAA, "buffer contents must be set");
-    }
+  // SecureBuffer
+  {
+    SecureBuffer buf(64);
+    TEST_ASSERT(buf.data() != nullptr, "buffer data must not be null");
+    TEST_ASSERT(buf.size() == 64, "buffer size must be 64");
+    std::memset(buf.data(), 0xAA, 64);
+    TEST_ASSERT(buf.data()[0] == 0xAA, "buffer contents must be set");
+  }
 
-    // SecureString
-    {
-        const char* raw = "secret_passphrase_123";
-        SecureString s(raw, std::strlen(raw));
-        TEST_ASSERT(s.size() == std::strlen(raw), "secure string size match");
-        TEST_ASSERT(std::string(s.c_str()) == raw, "secure string content match");
-        TEST_ASSERT(!s.empty(), "secure string not empty");
+  // SecureString
+  {
+    const char *raw = "secret_passphrase_123";
+    SecureString s(raw, std::strlen(raw));
+    TEST_ASSERT(s.size() == std::strlen(raw), "secure string size match");
+    TEST_ASSERT(std::string(s.c_str()) == raw, "secure string content match");
+    TEST_ASSERT(!s.empty(), "secure string not empty");
 
-        // Move semantics
-        SecureString s2 = std::move(s);
-        TEST_ASSERT(s2.size() == std::strlen(raw), "moved secure string size");
-        TEST_ASSERT(std::string(s2.c_str()) == raw, "moved secure string content");
-    }
+    // Move semantics
+    SecureString s2 = std::move(s);
+    TEST_ASSERT(s2.size() == std::strlen(raw), "moved secure string size");
+    TEST_ASSERT(std::string(s2.c_str()) == raw, "moved secure string content");
+  }
 }
 
 void test_header_validation() {
-    Header h{};
-    h.magic = MAGIC;
-    h.version = VERSION_CURRENT;
-    h.argon_time = 3;
-    h.argon_mem_kb = 128 * 1024;
-    h.argon_threads = 2;
-    h.mode = static_cast<uint8_t>(EncryptionMode::STANDARD);
+  Header h{};
+  h.magic = MAGIC;
+  h.version = VERSION_CURRENT;
+  h.argon_time = 3;
+  h.argon_mem_kb = 128 * 1024;
+  h.argon_threads = 2;
+  h.mode = static_cast<uint8_t>(EncryptionMode::STANDARD);
 
-    TEST_ASSERT(validate_header(h) == HeaderStatus::VALID, "valid header check");
+  TEST_ASSERT(validate_header(h) == HeaderStatus::VALID, "valid header check");
 
-    // Invalid magic
-    h.magic = 0x12345678;
-    TEST_ASSERT(validate_header(h) == HeaderStatus::INVALID_MAGIC, "invalid magic check");
-    h.magic = MAGIC;
+  // Invalid magic
+  h.magic = 0x12345678;
+  TEST_ASSERT(validate_header(h) == HeaderStatus::INVALID_MAGIC,
+              "invalid magic check");
+  h.magic = MAGIC;
 
-    // Unsupported version
-    h.version = 1;
-    TEST_ASSERT(validate_header(h) == HeaderStatus::UNSUPPORTED_VERSION, "v1 version check");
-    h.version = 99;
-    TEST_ASSERT(validate_header(h) == HeaderStatus::UNSUPPORTED_VERSION, "future version check");
-    h.version = VERSION_CURRENT;
+  // Unsupported version
+  h.version = 1;
+  TEST_ASSERT(validate_header(h) == HeaderStatus::UNSUPPORTED_VERSION,
+              "v1 version check");
+  h.version = 99;
+  TEST_ASSERT(validate_header(h) == HeaderStatus::UNSUPPORTED_VERSION,
+              "future version check");
+  h.version = VERSION_CURRENT;
 
-    // Bad argon params
-    h.argon_time = 0;
-    TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "zero argon time");
-    h.argon_time = 3;
+  // Bad argon params
+  h.argon_time = 0;
+  TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "zero argon time");
+  h.argon_time = 3;
 
-    h.argon_mem_kb = 2; // too small
-    TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "too small argon memory");
-    h.argon_mem_kb = 128 * 1024;
+  h.argon_mem_kb = 2; // too small
+  TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED,
+              "too small argon memory");
+  h.argon_mem_kb = 128 * 1024;
 
-    h.argon_threads = 0;
-    TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "zero threads");
-    h.argon_threads = 2;
+  h.argon_threads = 0;
+  TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "zero threads");
+  h.argon_threads = 2;
 
-    h.mode = 99;
-    TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "unknown mode");
+  h.mode = 99;
+  TEST_ASSERT(validate_header(h) == HeaderStatus::CORRUPTED, "unknown mode");
 }
 
 void test_standard_encryption_roundtrip() {
-    const std::string plain_path = "test_std_plain.tmp";
-    const std::string enc_path   = "test_std_enc.tmp";
-    const std::string dec_path   = "test_std_dec.tmp";
-    const std::string content    = "Hello, MiniCrypto Standard Encryption Test!";
+  const std::string plain_path = "test_std_plain.tmp";
+  const std::string enc_path = "test_std_enc.tmp";
+  const std::string dec_path = "test_std_dec.tmp";
+  const std::string content = "Hello, MiniCrypto Standard Encryption Test!";
 
-    write_file(plain_path, content);
+  write_file(plain_path, content);
 
-    SecureString pass("pass12345", 9);
-    EncryptParams ep;
-    ep.mode = EncryptionMode::STANDARD;
-    ep.argon_time = 1;      // Low cost for speedy unit tests
-    ep.argon_mem_kb = 8192; // 8 MB
-    ep.argon_threads = 1;
+  SecureString pass("pass12345", 9);
+  EncryptParams ep;
+  ep.mode = EncryptionMode::STANDARD;
+  ep.argon_time = 1;      // Low cost for speedy unit tests
+  ep.argon_mem_kb = 8192; // 8 MB
+  ep.argon_threads = 1;
 
-    encrypt_file(plain_path, enc_path, pass, ep);
+  encrypt_file(plain_path, enc_path, pass, ep);
 
-    DecryptParams dp;
-    dp.mode = EncryptionMode::STANDARD;
-    decrypt_file(enc_path, dec_path, pass, dp);
+  DecryptParams dp;
+  dp.mode = EncryptionMode::STANDARD;
+  decrypt_file(enc_path, dec_path, pass, dp);
 
-    TEST_ASSERT(read_file(dec_path) == content, "decrypted content must match original");
+  TEST_ASSERT(read_file(dec_path) == content,
+              "decrypted content must match original");
 
-    // Verification helper
-    bool verified = verify_encryption(plain_path, enc_path, pass, dp);
-    TEST_ASSERT(verified, "verify_encryption helper must return true");
+  // Verification helper
+  bool verified = verify_encryption(plain_path, enc_path, pass, dp);
+  TEST_ASSERT(verified, "verify_encryption helper must return true");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_split_key_mode() {
-    const std::string plain_path   = "test_split_plain.tmp";
-    const std::string enc_path     = "test_split_enc.tmp";
-    const std::string dec_path     = "test_split_dec.tmp";
-    const std::string content      = "Testing 2-Factor Split Key Encryption Mode";
-    std::vector<uint8_t> keyfile   = {0x01, 0x02, 0x03, 0x04, 0x05, 0xAA, 0xBB, 0xCC};
+  const std::string plain_path = "test_split_plain.tmp";
+  const std::string enc_path = "test_split_enc.tmp";
+  const std::string dec_path = "test_split_dec.tmp";
+  const std::string content = "Testing 2-Factor Split Key Encryption Mode";
+  std::vector<uint8_t> keyfile = {0x01, 0x02, 0x03, 0x04,
+                                  0x05, 0xAA, 0xBB, 0xCC};
 
-    write_file(plain_path, content);
+  write_file(plain_path, content);
 
-    SecureString pass("user_pass", 9);
-    EncryptParams ep;
-    ep.mode = EncryptionMode::SPLIT_KEY;
-    ep.keyfile = &keyfile;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString pass("user_pass", 9);
+  EncryptParams ep;
+  ep.mode = EncryptionMode::SPLIT_KEY;
+  ep.keyfile = &keyfile;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    encrypt_file(plain_path, enc_path, pass, ep);
+  encrypt_file(plain_path, enc_path, pass, ep);
 
-    DecryptParams dp;
-    dp.mode = EncryptionMode::SPLIT_KEY;
-    dp.keyfile = &keyfile;
+  DecryptParams dp;
+  dp.mode = EncryptionMode::SPLIT_KEY;
+  dp.keyfile = &keyfile;
 
+  decrypt_file(enc_path, dec_path, pass, dp);
+  TEST_ASSERT(read_file(dec_path) == content,
+              "split-key decrypted content matches");
+
+  // Decrypt with wrong keyfile must fail
+  std::vector<uint8_t> bad_keyfile = {0x00, 0x00, 0x00};
+  dp.keyfile = &bad_keyfile;
+  bool caught = false;
+  try {
     decrypt_file(enc_path, dec_path, pass, dp);
-    TEST_ASSERT(read_file(dec_path) == content, "split-key decrypted content matches");
+  } catch (const CryptoException &e) {
+    if (e.get_code() == ErrorCode::AUTH_FAILED)
+      caught = true;
+  }
+  TEST_ASSERT(caught, "wrong keyfile in split-key must trigger AUTH_FAILED");
 
-    // Decrypt with wrong keyfile must fail
-    std::vector<uint8_t> bad_keyfile = {0x00, 0x00, 0x00};
-    dp.keyfile = &bad_keyfile;
-    bool caught = false;
-    try {
-        decrypt_file(enc_path, dec_path, pass, dp);
-    } catch (const CryptoException& e) {
-        if (e.get_code() == ErrorCode::AUTH_FAILED) caught = true;
-    }
-    TEST_ASSERT(caught, "wrong keyfile in split-key must trigger AUTH_FAILED");
-
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_key_only_mode() {
-    const std::string plain_path = "test_keyonly_plain.tmp";
-    const std::string enc_path   = "test_keyonly_enc.tmp";
-    const std::string dec_path   = "test_keyonly_dec.tmp";
-    const std::string content    = "Pure Keyfile Machine-to-Machine Secret";
-    std::vector<uint8_t> keyfile = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  const std::string plain_path = "test_keyonly_plain.tmp";
+  const std::string enc_path = "test_keyonly_enc.tmp";
+  const std::string dec_path = "test_keyonly_dec.tmp";
+  const std::string content = "Pure Keyfile Machine-to-Machine Secret";
+  std::vector<uint8_t> keyfile = {0x11, 0x22, 0x33, 0x44,
+                                  0x55, 0x66, 0x77, 0x88};
 
-    write_file(plain_path, content);
+  write_file(plain_path, content);
 
-    SecureString empty_pass;
-    EncryptParams ep;
-    ep.mode = EncryptionMode::KEY_ONLY;
-    ep.keyfile = &keyfile;
+  SecureString empty_pass;
+  EncryptParams ep;
+  ep.mode = EncryptionMode::KEY_ONLY;
+  ep.keyfile = &keyfile;
 
-    encrypt_file(plain_path, enc_path, empty_pass, ep);
+  encrypt_file(plain_path, enc_path, empty_pass, ep);
 
-    DecryptParams dp;
-    dp.mode = EncryptionMode::KEY_ONLY;
-    dp.keyfile = &keyfile;
+  DecryptParams dp;
+  dp.mode = EncryptionMode::KEY_ONLY;
+  dp.keyfile = &keyfile;
 
-    decrypt_file(enc_path, dec_path, empty_pass, dp);
-    TEST_ASSERT(read_file(dec_path) == content, "key-only decrypted content matches");
+  decrypt_file(enc_path, dec_path, empty_pass, dp);
+  TEST_ASSERT(read_file(dec_path) == content,
+              "key-only decrypted content matches");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_headerless_mode() {
-    const std::string plain_path = "test_hdrless_plain.tmp";
-    const std::string enc_path   = "test_hdrless_enc.tmp";
-    const std::string dec_path   = "test_hdrless_dec.tmp";
-    const std::string content    = "Hidden in plain sight - Headerless payload";
+  const std::string plain_path = "test_hdrless_plain.tmp";
+  const std::string enc_path = "test_hdrless_enc.tmp";
+  const std::string dec_path = "test_hdrless_dec.tmp";
+  const std::string content = "Hidden in plain sight - Headerless payload";
 
-    write_file(plain_path, content);
+  write_file(plain_path, content);
 
-    SecureString pass("stego_pass", 10);
-    EncryptParams ep;
-    ep.mode = EncryptionMode::HEADERLESS;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString pass("stego_pass", 10);
+  EncryptParams ep;
+  ep.mode = EncryptionMode::HEADERLESS;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    encrypt_file(plain_path, enc_path, pass, ep);
+  encrypt_file(plain_path, enc_path, pass, ep);
 
-    DecryptParams dp;
-    dp.mode = EncryptionMode::HEADERLESS;
-    dp.argon_time = 1;
-    dp.argon_mem_kb = 8192;
-    dp.argon_threads = 1;
+  DecryptParams dp;
+  dp.mode = EncryptionMode::HEADERLESS;
+  dp.argon_time = 1;
+  dp.argon_mem_kb = 8192;
+  dp.argon_threads = 1;
 
-    decrypt_file(enc_path, dec_path, pass, dp);
-    TEST_ASSERT(read_file(dec_path) == content, "headerless decrypted content matches");
+  decrypt_file(enc_path, dec_path, pass, dp);
+  TEST_ASSERT(read_file(dec_path) == content,
+              "headerless decrypted content matches");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_deterministic_mode() {
-    const std::string plain_path = "test_det_plain.tmp";
-    const std::string enc1_path  = "test_det_enc1.tmp";
-    const std::string enc2_path  = "test_det_enc2.tmp";
-    const std::string dec_path   = "test_det_dec.tmp";
-    const std::string content    = "Identical plaintexts will yield identical ciphertexts";
+  const std::string plain_path = "test_det_plain.tmp";
+  const std::string enc1_path = "test_det_enc1.tmp";
+  const std::string enc2_path = "test_det_enc2.tmp";
+  const std::string dec_path = "test_det_dec.tmp";
+  const std::string content =
+      "Identical plaintexts will yield identical ciphertexts";
 
-    write_file(plain_path, content);
+  write_file(plain_path, content);
 
-    SecureString pass("dedup_pass", 10);
-    EncryptParams ep;
-    ep.mode = EncryptionMode::STANDARD;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
-    ep.deterministic_salt = true;
-    ep.deterministic_confirm_callback = []() { return true; };
+  SecureString pass("dedup_pass", 10);
+  EncryptParams ep;
+  ep.mode = EncryptionMode::STANDARD;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
+  ep.deterministic_salt = true;
+  ep.deterministic_confirm_callback = []() { return true; };
 
-    encrypt_file(plain_path, enc1_path, pass, ep);
-    encrypt_file(plain_path, enc2_path, pass, ep);
+  encrypt_file(plain_path, enc1_path, pass, ep);
+  encrypt_file(plain_path, enc2_path, pass, ep);
 
-    // Both ciphertexts must be identical byte-for-byte
-    std::string c1 = read_file(enc1_path);
-    std::string c2 = read_file(enc2_path);
-    TEST_ASSERT(c1 == c2, "deterministic mode must produce identical ciphertexts");
+  // Both ciphertexts must be identical byte-for-byte
+  std::string c1 = read_file(enc1_path);
+  std::string c2 = read_file(enc2_path);
+  TEST_ASSERT(c1 == c2,
+              "deterministic mode must produce identical ciphertexts");
 
-    // Decrypt must work
-    DecryptParams dp;
-    dp.mode = EncryptionMode::STANDARD;
-    decrypt_file(enc1_path, dec_path, pass, dp);
-    TEST_ASSERT(read_file(dec_path) == content, "deterministic decryption matches");
+  // Decrypt must work
+  DecryptParams dp;
+  dp.mode = EncryptionMode::STANDARD;
+  decrypt_file(enc1_path, dec_path, pass, dp);
+  TEST_ASSERT(read_file(dec_path) == content,
+              "deterministic decryption matches");
 
-    remove_file(plain_path);
-    remove_file(enc1_path);
-    remove_file(enc2_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc1_path);
+  remove_file(enc2_path);
+  remove_file(dec_path);
 }
 
 void test_tamper_detection() {
-    const std::string plain_path = "test_tamper_plain.tmp";
-    const std::string enc_path   = "test_tamper_enc.tmp";
-    const std::string dec_path   = "test_tamper_dec.tmp";
-    const std::string content    = "Data that must not be altered without detection!";
+  const std::string plain_path = "test_tamper_plain.tmp";
+  const std::string enc_path = "test_tamper_enc.tmp";
+  const std::string dec_path = "test_tamper_dec.tmp";
+  const std::string content =
+      "Data that must not be altered without detection!";
 
-    write_file(plain_path, content);
+  write_file(plain_path, content);
 
-    SecureString pass("tamper_pass", 11);
-    EncryptParams ep;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString pass("tamper_pass", 11);
+  EncryptParams ep;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    encrypt_file(plain_path, enc_path, pass, ep);
+  encrypt_file(plain_path, enc_path, pass, ep);
 
-    // Tamper with the ciphertext: flip 1 byte towards the end
-    {
-        std::fstream f(enc_path, std::ios::in | std::ios::out | std::ios::binary);
-        f.seekp(-5, std::ios::end);
-        char b = 0;
-        f.read(&b, 1);
-        b ^= 0x55;
-        f.seekp(-5, std::ios::end);
-        f.write(&b, 1);
-    }
+  // Tamper with the ciphertext: flip 1 byte towards the end
+  {
+    std::fstream f(enc_path, std::ios::in | std::ios::out | std::ios::binary);
+    f.seekp(-5, std::ios::end);
+    char b = 0;
+    f.read(&b, 1);
+    b ^= 0x55;
+    f.seekp(-5, std::ios::end);
+    f.write(&b, 1);
+  }
 
-    DecryptParams dp;
-    bool caught = false;
-    try {
-        decrypt_file(enc_path, dec_path, pass, dp);
-    } catch (const CryptoException& e) {
-        if (e.get_code() == ErrorCode::AUTH_FAILED) caught = true;
-    }
-    TEST_ASSERT(caught, "tampered ciphertext must be detected by AEAD poly1305 MAC");
+  DecryptParams dp;
+  bool caught = false;
+  try {
+    decrypt_file(enc_path, dec_path, pass, dp);
+  } catch (const CryptoException &e) {
+    if (e.get_code() == ErrorCode::AUTH_FAILED)
+      caught = true;
+  }
+  TEST_ASSERT(caught,
+              "tampered ciphertext must be detected by AEAD poly1305 MAC");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_wrong_password() {
-    const std::string plain_path = "test_wrongp_plain.tmp";
-    const std::string enc_path   = "test_wrongp_enc.tmp";
-    const std::string dec_path   = "test_wrongp_dec.tmp";
+  const std::string plain_path = "test_wrongp_plain.tmp";
+  const std::string enc_path = "test_wrongp_enc.tmp";
+  const std::string dec_path = "test_wrongp_dec.tmp";
 
-    write_file(plain_path, "Secret Data");
+  write_file(plain_path, "Secret Data");
 
-    SecureString correct_pass("correct_password", 16);
-    EncryptParams ep;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString correct_pass("correct_password", 16);
+  EncryptParams ep;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    encrypt_file(plain_path, enc_path, correct_pass, ep);
+  encrypt_file(plain_path, enc_path, correct_pass, ep);
 
-    SecureString wrong_pass("totally_wrong_pw", 16);
-    DecryptParams dp;
-    bool caught = false;
-    try {
-        decrypt_file(enc_path, dec_path, wrong_pass, dp);
-    } catch (const CryptoException& e) {
-        if (e.get_code() == ErrorCode::AUTH_FAILED) caught = true;
-    }
-    TEST_ASSERT(caught, "wrong password must throw AUTH_FAILED");
+  SecureString wrong_pass("totally_wrong_pw", 16);
+  DecryptParams dp;
+  bool caught = false;
+  try {
+    decrypt_file(enc_path, dec_path, wrong_pass, dp);
+  } catch (const CryptoException &e) {
+    if (e.get_code() == ErrorCode::AUTH_FAILED)
+      caught = true;
+  }
+  TEST_ASSERT(caught, "wrong password must throw AUTH_FAILED");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_large_file_streaming() {
-    const std::string plain_path = "test_large_plain.tmp";
-    const std::string enc_path   = "test_large_enc.tmp";
-    const std::string dec_path   = "test_large_dec.tmp";
+  const std::string plain_path = "test_large_plain.tmp";
+  const std::string enc_path = "test_large_enc.tmp";
+  const std::string dec_path = "test_large_dec.tmp";
 
-    // 2.5 MB (exceeds 1 MB CHUNK_SIZE so multiple stream chunks are exercised)
-    const size_t total_size = static_cast<size_t>(2.5 * 1024 * 1024);
-    {
-        std::ofstream f(plain_path, std::ios::binary);
-        std::vector<char> chunk(65536, 'X');
-        size_t written = 0;
-        while (written < total_size) {
-            size_t to_write = std::min(chunk.size(), total_size - written);
-            f.write(chunk.data(), static_cast<std::streamsize>(to_write));
-            written += to_write;
-        }
+  // 2.5 MB (exceeds 1 MB CHUNK_SIZE so multiple stream chunks are exercised)
+  const size_t total_size = static_cast<size_t>(2.5 * 1024 * 1024);
+  {
+    std::ofstream f(plain_path, std::ios::binary);
+    std::vector<char> chunk(65536, 'X');
+    size_t written = 0;
+    while (written < total_size) {
+      size_t to_write = std::min(chunk.size(), total_size - written);
+      f.write(chunk.data(), static_cast<std::streamsize>(to_write));
+      written += to_write;
     }
+  }
 
-    SecureString pass("streaming_pass", 14);
-    EncryptParams ep;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString pass("streaming_pass", 14);
+  EncryptParams ep;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    uint64_t last_progress = 0;
-    ep.progress_callback = [&](uint64_t b) { last_progress = b; };
+  uint64_t last_progress = 0;
+  ep.progress_callback = [&](uint64_t b) { last_progress = b; };
 
-    encrypt_file(plain_path, enc_path, pass, ep);
-    TEST_ASSERT(last_progress == total_size, "progress callback reported total size");
+  encrypt_file(plain_path, enc_path, pass, ep);
+  TEST_ASSERT(last_progress == total_size,
+              "progress callback reported total size");
 
-    DecryptParams dp;
-    decrypt_file(enc_path, dec_path, pass, dp);
+  DecryptParams dp;
+  decrypt_file(enc_path, dec_path, pass, dp);
 
-    TEST_ASSERT(read_file(dec_path).size() == total_size, "large file decrypted size matches");
+  TEST_ASSERT(read_file(dec_path).size() == total_size,
+              "large file decrypted size matches");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_empty_file() {
-    const std::string plain_path = "test_empty_plain.tmp";
-    const std::string enc_path   = "test_empty_enc.tmp";
-    const std::string dec_path   = "test_empty_dec.tmp";
+  const std::string plain_path = "test_empty_plain.tmp";
+  const std::string enc_path = "test_empty_enc.tmp";
+  const std::string dec_path = "test_empty_dec.tmp";
 
-    write_file(plain_path, "");
+  write_file(plain_path, "");
 
-    SecureString pass("pass", 4);
-    EncryptParams ep;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString pass("pass", 4);
+  EncryptParams ep;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    encrypt_file(plain_path, enc_path, pass, ep);
+  encrypt_file(plain_path, enc_path, pass, ep);
 
-    DecryptParams dp;
-    decrypt_file(enc_path, dec_path, pass, dp);
+  DecryptParams dp;
+  decrypt_file(enc_path, dec_path, pass, dp);
 
-    TEST_ASSERT(read_file(dec_path).empty(), "empty file roundtrip succeeds");
+  TEST_ASSERT(read_file(dec_path).empty(), "empty file roundtrip succeeds");
 
-    remove_file(plain_path);
-    remove_file(enc_path);
-    remove_file(dec_path);
+  remove_file(plain_path);
+  remove_file(enc_path);
+  remove_file(dec_path);
 }
 
 void test_directory_pack_unpack() {
-    const std::string test_dir    = "test_pack_dir";
-    const std::string archive     = "test_archive.mcda";
-    const std::string unpack_dir  = "test_unpack_dir";
+  const std::string test_dir = "test_pack_dir";
+  const std::string archive = "test_archive.mcda";
+  const std::string unpack_dir = "test_unpack_dir";
 
-    std::filesystem::create_directories(test_dir + "/sub1");
-    std::filesystem::create_directories(test_dir + "/sub2/nested");
-    std::filesystem::create_directories(test_dir + "/empty/nested");
+  std::filesystem::create_directories(test_dir + "/sub1");
+  std::filesystem::create_directories(test_dir + "/sub2/nested");
+  std::filesystem::create_directories(test_dir + "/empty/nested");
 
-    write_file(test_dir + "/root.txt", "Root content");
-    write_file(test_dir + "/sub1/file1.txt", "File 1 in sub1");
-    write_file(test_dir + "/sub2/file2.txt", "File 2 in sub2");
-    write_file(test_dir + "/sub2/nested/deep.txt", "Deep nested file content");
-    write_file(test_dir + "/empty_file.txt", "");
+  write_file(test_dir + "/root.txt", "Root content");
+  write_file(test_dir + "/sub1/file1.txt", "File 1 in sub1");
+  write_file(test_dir + "/sub2/file2.txt", "File 2 in sub2");
+  write_file(test_dir + "/sub2/nested/deep.txt", "Deep nested file content");
+  write_file(test_dir + "/empty_file.txt", "");
 
-    pack_directory(test_dir, archive);
+  pack_directory(test_dir, archive);
 
-    unpack_directory(archive, unpack_dir);
+  unpack_directory(archive, unpack_dir);
 
-    TEST_ASSERT(read_file(unpack_dir + "/root.txt") == "Root content", "root.txt unpack match");
-    TEST_ASSERT(read_file(unpack_dir + "/sub1/file1.txt") == "File 1 in sub1", "sub1/file1.txt match");
-    TEST_ASSERT(read_file(unpack_dir + "/sub2/file2.txt") == "File 2 in sub2", "sub2/file2.txt match");
-    TEST_ASSERT(read_file(unpack_dir + "/sub2/nested/deep.txt") == "Deep nested file content", "deep.txt match");
-    TEST_ASSERT(std::filesystem::is_directory(unpack_dir + "/empty"), "empty directory is restored");
-    TEST_ASSERT(std::filesystem::is_directory(unpack_dir + "/empty/nested"), "nested empty directory is restored");
-    TEST_ASSERT(std::filesystem::is_regular_file(unpack_dir + "/empty_file.txt"), "zero-byte file remains a file");
-    TEST_ASSERT(read_file(unpack_dir + "/empty_file.txt").empty(), "zero-byte file remains empty");
+  TEST_ASSERT(read_file(unpack_dir + "/root.txt") == "Root content",
+              "root.txt unpack match");
+  TEST_ASSERT(read_file(unpack_dir + "/sub1/file1.txt") == "File 1 in sub1",
+              "sub1/file1.txt match");
+  TEST_ASSERT(read_file(unpack_dir + "/sub2/file2.txt") == "File 2 in sub2",
+              "sub2/file2.txt match");
+  TEST_ASSERT(read_file(unpack_dir + "/sub2/nested/deep.txt") ==
+                  "Deep nested file content",
+              "deep.txt match");
+  TEST_ASSERT(std::filesystem::is_directory(unpack_dir + "/empty"),
+              "empty directory is restored");
+  TEST_ASSERT(std::filesystem::is_directory(unpack_dir + "/empty/nested"),
+              "nested empty directory is restored");
+  TEST_ASSERT(std::filesystem::is_regular_file(unpack_dir + "/empty_file.txt"),
+              "zero-byte file remains a file");
+  TEST_ASSERT(read_file(unpack_dir + "/empty_file.txt").empty(),
+              "zero-byte file remains empty");
 
-    remove_rf(test_dir);
-    remove_rf(unpack_dir);
-    remove_file(archive);
+  remove_rf(test_dir);
+  remove_rf(unpack_dir);
+  remove_file(archive);
 }
 
 void test_directory_encryption_roundtrip() {
-    const std::string test_dir   = "test_enc_dir";
-    const std::string enc_path   = "test_dir.mcc";
-    const std::string dec_dir    = "test_dec_dir";
+  const std::string test_dir = "test_enc_dir";
+  const std::string enc_path = "test_dir.mcc";
+  const std::string dec_dir = "test_dec_dir";
 
-    std::filesystem::create_directories(test_dir + "/docs");
-    write_file(test_dir + "/readme.md", "# Encrypted Directory Project");
-    write_file(test_dir + "/docs/notes.txt", "Confidential notes inside directory");
+  std::filesystem::create_directories(test_dir + "/docs");
+  write_file(test_dir + "/readme.md", "# Encrypted Directory Project");
+  write_file(test_dir + "/docs/notes.txt",
+             "Confidential notes inside directory");
 
-    SecureString pass("dir_password_99", 15);
-    EncryptParams ep;
-    ep.argon_time = 1;
-    ep.argon_mem_kb = 8192;
-    ep.argon_threads = 1;
+  SecureString pass("dir_password_99", 15);
+  EncryptParams ep;
+  ep.argon_time = 1;
+  ep.argon_mem_kb = 8192;
+  ep.argon_threads = 1;
 
-    encrypt_directory(test_dir, enc_path, pass, ep);
-    TEST_ASSERT(is_regular_file(enc_path), "encrypted archive file must exist");
+  encrypt_directory(test_dir, enc_path, pass, ep);
+  TEST_ASSERT(is_regular_file(enc_path), "encrypted archive file must exist");
 
-    DecryptParams dp;
-    decrypt_directory(enc_path, dec_dir, pass, dp);
+  DecryptParams dp;
+  decrypt_directory(enc_path, dec_dir, pass, dp);
 
-    TEST_ASSERT(is_directory(dec_dir), "decrypted directory must exist");
-    TEST_ASSERT(read_file(dec_dir + "/readme.md") == "# Encrypted Directory Project", "readme content match");
-    TEST_ASSERT(read_file(dec_dir + "/docs/notes.txt") == "Confidential notes inside directory", "docs/notes match");
+  TEST_ASSERT(is_directory(dec_dir), "decrypted directory must exist");
+  TEST_ASSERT(read_file(dec_dir + "/readme.md") ==
+                  "# Encrypted Directory Project",
+              "readme content match");
+  TEST_ASSERT(read_file(dec_dir + "/docs/notes.txt") ==
+                  "Confidential notes inside directory",
+              "docs/notes match");
 
-    remove_rf(test_dir);
-    remove_rf(dec_dir);
-    remove_file(enc_path);
+  remove_rf(test_dir);
+  remove_rf(dec_dir);
+  remove_file(enc_path);
 }
 
 void test_atomic_file() {
-    const std::string target = "test_atomic.txt";
-    remove_file(target);
+  const std::string target = "test_atomic.txt";
+  remove_file(target);
 
-    // Aborted atomic write
-    {
-        AtomicFile af(target);
-        af.get() << "will not commit";
-    }
-    TEST_ASSERT(!is_regular_file(target), "aborted AtomicFile must not create target");
-    TEST_ASSERT(!is_regular_file(target + ".tmp"), "aborted AtomicFile must clean up temp");
+  // Aborted atomic write
+  {
+    AtomicFile af(target);
+    af.get() << "will not commit";
+  }
+  TEST_ASSERT(!is_regular_file(target),
+              "aborted AtomicFile must not create target");
+  TEST_ASSERT(!is_regular_file(target + ".tmp"),
+              "aborted AtomicFile must clean up temp");
 
-    // Committed atomic write
-    {
-        AtomicFile af(target);
-        af.get() << "committed content";
-        af.commit();
-    }
-    TEST_ASSERT(is_regular_file(target), "committed AtomicFile must create target");
-    TEST_ASSERT(read_file(target) == "committed content", "committed content match");
+  // Committed atomic write
+  {
+    AtomicFile af(target);
+    af.get() << "committed content";
+    af.commit();
+  }
+  TEST_ASSERT(is_regular_file(target),
+              "committed AtomicFile must create target");
+  TEST_ASSERT(read_file(target) == "committed content",
+              "committed content match");
 
-    remove_file(target);
+  remove_file(target);
 }
 
 void test_path_traversal_prevention() {
-    const std::string bad_archive = "test_traversal.mcda";
-    const std::string unpack_dir  = "test_traversal_dir";
+  const std::string bad_archive = "test_traversal.mcda";
+  const std::string unpack_dir = "test_traversal_dir";
 
-    // Fabricate an archive with path "../escaped.txt"
-    {
-        std::ofstream out(bad_archive, std::ios::binary);
-        uint32_t magic = ARCHIVE_MAGIC;
-        uint32_t ver   = ARCHIVE_VERSION;
-        out.write(reinterpret_cast<char*>(&magic), 4);
-        out.write(reinterpret_cast<char*>(&ver), 4);
+  // Fabricate an archive with path "../escaped.txt"
+  {
+    std::ofstream out(bad_archive, std::ios::binary);
+    uint32_t magic = ARCHIVE_MAGIC;
+    uint32_t ver = ARCHIVE_VERSION;
+    out.write(reinterpret_cast<char *>(&magic), 4);
+    out.write(reinterpret_cast<char *>(&ver), 4);
 
-        std::string evil_path = "../escaped.txt";
-        uint16_t path_len = static_cast<uint16_t>(evil_path.size());
-        out.write(reinterpret_cast<char*>(&path_len), 2);
-        out.write(evil_path.data(), path_len);
+    std::string evil_path = "../escaped.txt";
+    uint16_t path_len = static_cast<uint16_t>(evil_path.size());
+    out.write(reinterpret_cast<char *>(&path_len), 2);
+    out.write(evil_path.data(), path_len);
 
-        uint64_t file_size = 4;
-        out.write(reinterpret_cast<char*>(&file_size), 8);
-        out.write("evil", 4);
+    uint64_t file_size = 4;
+    out.write(reinterpret_cast<char *>(&file_size), 8);
+    out.write("evil", 4);
 
-        uint16_t end_marker = 0;
-        out.write(reinterpret_cast<char*>(&end_marker), 2);
-    }
+    uint16_t end_marker = 0;
+    out.write(reinterpret_cast<char *>(&end_marker), 2);
+  }
 
-    bool caught = false;
-    try {
-        unpack_directory(bad_archive, unpack_dir);
-    } catch (const CryptoException& e) {
-        if (e.get_code() == ErrorCode::CORRUPTED_FILE) caught = true;
-    }
+  bool caught = false;
+  try {
+    unpack_directory(bad_archive, unpack_dir);
+  } catch (const CryptoException &e) {
+    if (e.get_code() == ErrorCode::CORRUPTED_FILE)
+      caught = true;
+  }
 
-    TEST_ASSERT(caught, "archive with path traversal must be rejected");
-    TEST_ASSERT(!is_regular_file("escaped.txt"), "escaped file must never be written");
+  TEST_ASSERT(caught, "archive with path traversal must be rejected");
+  TEST_ASSERT(!is_regular_file("escaped.txt"),
+              "escaped file must never be written");
 
-    remove_file(bad_archive);
-    remove_rf(unpack_dir);
+  remove_file(bad_archive);
+  remove_rf(unpack_dir);
 }
 
 void test_archive_path_length_limit() {
-    const std::string bad_archive = "test_long_path.mcda";
-    const std::string unpack_dir = "test_long_path_dir";
+  const std::string bad_archive = "test_long_path.mcda";
+  const std::string unpack_dir = "test_long_path_dir";
 
-    // A malicious header must be rejected before trying to read its path bytes.
-    {
-        std::ofstream out(bad_archive, std::ios::binary);
-        uint32_t magic = ARCHIVE_MAGIC;
-        uint32_t ver = ARCHIVE_VERSION;
-        out.write(reinterpret_cast<char*>(&magic), 4);
-        out.write(reinterpret_cast<char*>(&ver), 4);
+  // A malicious header must be rejected before trying to read its path bytes.
+  {
+    std::ofstream out(bad_archive, std::ios::binary);
+    uint32_t magic = ARCHIVE_MAGIC;
+    uint32_t ver = ARCHIVE_VERSION;
+    out.write(reinterpret_cast<char *>(&magic), 4);
+    out.write(reinterpret_cast<char *>(&ver), 4);
 
-        uint16_t path_len = ARCHIVE_MAX_PATH_LEN + 1;
-        out.write(reinterpret_cast<char*>(&path_len), 2);
-    }
+    uint16_t path_len = ARCHIVE_MAX_PATH_LEN + 1;
+    out.write(reinterpret_cast<char *>(&path_len), 2);
+  }
 
-    bool caught = false;
-    try {
-        unpack_directory(bad_archive, unpack_dir);
-    } catch (const CryptoException& e) {
-        if (e.get_code() == ErrorCode::CORRUPTED_FILE) caught = true;
-    }
+  bool caught = false;
+  try {
+    unpack_directory(bad_archive, unpack_dir);
+  } catch (const CryptoException &e) {
+    if (e.get_code() == ErrorCode::CORRUPTED_FILE)
+      caught = true;
+  }
 
-    TEST_ASSERT(caught, "archive path longer than 4096 bytes must be rejected");
+  TEST_ASSERT(caught, "archive path longer than 4096 bytes must be rejected");
 
-    remove_file(bad_archive);
-    remove_rf(unpack_dir);
+  remove_file(bad_archive);
+  remove_rf(unpack_dir);
 }
 
 void test_unicode_filesystem_paths() {
-    namespace fs = std::filesystem;
-    const fs::path root = fs::u8path(u8"test_\u0434\u0430\u043D\u043D\u044B\u0435_\u8DEF\u5F84");
-    const fs::path archive = fs::u8path(u8"test_\u0430\u0440\u0445\u0438\u0432.mcda");
-    const fs::path restored = fs::u8path(u8"test_\u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E");
-    const fs::path filename = fs::u8path(u8"\u0444\u0430\u0439\u043B.txt");
-    const fs::path encrypted = fs::u8path(u8"test_\u0448\u0438\u0444\u0440.mc");
-    const fs::path decrypted = fs::u8path(u8"test_\u0440\u0430\u0441\u0448\u0438\u0444\u0440.txt");
-    const fs::path source = root / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430") / filename;
+  namespace fs = std::filesystem;
+  const fs::path root =
+      fs::u8path(u8"test_\u0434\u0430\u043D\u043D\u044B\u0435_\u8DEF\u5F84");
+  const fs::path archive =
+      fs::u8path(u8"test_\u0430\u0440\u0445\u0438\u0432.mcda");
+  const fs::path restored =
+      fs::u8path(u8"test_"
+                 u8"\u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432"
+                 u8"\u043B\u0435\u043D\u043E");
+  const fs::path filename = fs::u8path(u8"\u0444\u0430\u0439\u043B.txt");
+  const fs::path encrypted = fs::u8path(u8"test_\u0448\u0438\u0444\u0440.mc");
+  const fs::path decrypted =
+      fs::u8path(u8"test_\u0440\u0430\u0441\u0448\u0438\u0444\u0440.txt");
+  const fs::path source =
+      root / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430") / filename;
 
-    fs::create_directories(root / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430"));
-    {
-        std::ofstream out(source, std::ios::binary);
-        out << "Unicode path roundtrip";
-    }
+  fs::create_directories(root / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430"));
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "Unicode path roundtrip";
+  }
 
-    SecureString password("unicode_path_password", 21);
-    EncryptParams encrypt_params;
-    encrypt_params.argon_time = 1;
-    encrypt_params.argon_mem_kb = 8192;
-    encrypt_params.argon_threads = 1;
-    DecryptParams decrypt_params;
-    encrypt_file(source, encrypted, password, encrypt_params);
-    decrypt_file(encrypted, decrypted, password, decrypt_params);
+  SecureString password("unicode_path_password", 21);
+  EncryptParams encrypt_params;
+  encrypt_params.argon_time = 1;
+  encrypt_params.argon_mem_kb = 8192;
+  encrypt_params.argon_threads = 1;
+  DecryptParams decrypt_params;
+  encrypt_file(source, encrypted, password, encrypt_params);
+  decrypt_file(encrypted, decrypted, password, decrypt_params);
 
-    std::ifstream decrypted_file(decrypted, std::ios::binary);
-    std::string decrypted_contents((std::istreambuf_iterator<char>(decrypted_file)),
-        std::istreambuf_iterator<char>());
-    decrypted_file.close();
-    TEST_ASSERT(decrypted_contents == "Unicode path roundtrip", "Unicode file API paths roundtrip");
+  std::ifstream decrypted_file(decrypted, std::ios::binary);
+  std::string decrypted_contents(
+      (std::istreambuf_iterator<char>(decrypted_file)),
+      std::istreambuf_iterator<char>());
+  decrypted_file.close();
+  TEST_ASSERT(decrypted_contents == "Unicode path roundtrip",
+              "Unicode file API paths roundtrip");
 
-    pack_directory(root, archive);
-    unpack_directory(archive, restored);
+  pack_directory(root, archive);
+  unpack_directory(archive, restored);
 
-    std::ifstream restored_file(
-        restored / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430") / filename,
-        std::ios::binary);
-    std::string contents((std::istreambuf_iterator<char>(restored_file)),
-        std::istreambuf_iterator<char>());
-    restored_file.close();
-    TEST_ASSERT(contents == "Unicode path roundtrip", "Unicode archive paths roundtrip");
+  std::ifstream restored_file(
+      restored / fs::u8path(u8"\u043F\u0430\u043F\u043A\u0430") / filename,
+      std::ios::binary);
+  std::string contents((std::istreambuf_iterator<char>(restored_file)),
+                       std::istreambuf_iterator<char>());
+  restored_file.close();
+  TEST_ASSERT(contents == "Unicode path roundtrip",
+              "Unicode archive paths roundtrip");
 
-    fs::remove_all(root);
-    fs::remove_all(restored);
-    fs::remove(archive);
-    fs::remove(encrypted);
-    fs::remove(decrypted);
+  fs::remove_all(root);
+  fs::remove_all(restored);
+  fs::remove(archive);
+  fs::remove(encrypted);
+  fs::remove(decrypted);
 }
 
 static void test_deniable_container_cover_only() {
-    std::string cover_path = "test_deniable_cover.tmp";
-    std::string container_path = "test_deniable_container1.tmp";
-    std::string out_path = "test_deniable_out1.tmp";
+  std::string cover_path = "test_deniable_cover.tmp";
+  std::string container_path = "test_deniable_container1.tmp";
+  std::string out_path = "test_deniable_out1.tmp";
 
-    write_file(cover_path, "Secret cover content here 12345");
+  write_file(cover_path, "Secret cover content here 12345");
 
-    SecureString cover_pass("coverpass123", 12);
-    DeniableContainerOptions opts;
-    opts.slot_size_bytes = 1024 * 1024; // 1 MB
-    opts.argon_time = 1;
-    opts.argon_mem_kb = 8192; // 8 MB (minimum valid)
-    opts.argon_threads = 1;
+  SecureString cover_pass("coverpass123", 12);
+  DeniableContainerOptions opts;
+  opts.slot_size_bytes = 1024 * 1024; // 1 MB
+  opts.argon_time = 1;
+  opts.argon_mem_kb = 8192; // 8 MB (minimum valid)
+  opts.argon_threads = 1;
 
-    create_deniable_container(cover_path, nullptr, container_path, cover_pass, nullptr, opts);
+  create_deniable_container(cover_path, nullptr, container_path, cover_pass,
+                            nullptr, opts);
 
-    // Verify container file size is exactly 2 * slot_size_bytes (payload size hidden)
-    std::error_code ec;
-    TEST_ASSERT(std::filesystem::file_size(container_path, ec) == 2 * opts.slot_size_bytes,
-                "Container size is exactly 2 * slot_size");
+  // Verify container file size is exactly 2 * slot_size_bytes (payload size
+  // hidden)
+  std::error_code ec;
+  TEST_ASSERT(std::filesystem::file_size(container_path, ec) ==
+                  2 * opts.slot_size_bytes,
+              "Container size is exactly 2 * slot_size");
 
-    // Open with correct password
-    open_deniable_container(container_path, out_path, cover_pass, opts);
-    TEST_ASSERT(read_file(out_path) == "Secret cover content here 12345",
-                "Cover slot roundtrip matches");
+  // Open with correct password
+  open_deniable_container(container_path, out_path, cover_pass, opts);
+  TEST_ASSERT(read_file(out_path) == "Secret cover content here 12345",
+              "Cover slot roundtrip matches");
 
-    // Open with wrong password -> throws AUTH_FAILED
-    bool failed = false;
-    try {
-        SecureString wrong_pass("wrongpassword", 13);
-        open_deniable_container(container_path, out_path, wrong_pass, opts);
-    } catch (const CryptoException& e) {
-        if (e.get_code() == ErrorCode::AUTH_FAILED) failed = true;
-    }
-    TEST_ASSERT(failed, "Wrong password throws AUTH_FAILED");
+  // Open with wrong password -> throws AUTH_FAILED
+  bool failed = false;
+  try {
+    SecureString wrong_pass("wrongpassword", 13);
+    open_deniable_container(container_path, out_path, wrong_pass, opts);
+  } catch (const CryptoException &e) {
+    if (e.get_code() == ErrorCode::AUTH_FAILED)
+      failed = true;
+  }
+  TEST_ASSERT(failed, "Wrong password throws AUTH_FAILED");
 
-    remove_file(cover_path);
-    remove_file(container_path);
-    remove_file(out_path);
+  remove_file(cover_path);
+  remove_file(container_path);
+  remove_file(out_path);
 }
 
 static void test_deniable_container_cover_and_hidden() {
-    std::filesystem::path cover_path = "test_deniable_cover2.tmp";
-    std::filesystem::path hidden_path = "test_deniable_hidden2.tmp";
-    std::filesystem::path container_path = "test_deniable_container2.tmp";
-    std::filesystem::path out_cover = "test_deniable_out_cov.tmp";
-    std::filesystem::path out_hidden = "test_deniable_out_hid.tmp";
+  std::filesystem::path cover_path = "test_deniable_cover2.tmp";
+  std::filesystem::path hidden_path = "test_deniable_hidden2.tmp";
+  std::filesystem::path container_path = "test_deniable_container2.tmp";
+  std::filesystem::path out_cover = "test_deniable_out_cov.tmp";
+  std::filesystem::path out_hidden = "test_deniable_out_hid.tmp";
 
-    write_file(cover_path.string(), "Public innocuous document");
-    write_file(hidden_path.string(), "Super confidential hidden payload");
+  write_file(cover_path.string(), "Public innocuous document");
+  write_file(hidden_path.string(), "Super confidential hidden payload");
 
-    SecureString cover_pass("coverpass", 9);
-    SecureString hidden_pass("hiddenpass", 10);
-    DeniableContainerOptions opts;
-    opts.slot_size_bytes = 1024 * 1024; // 1 MB
-    opts.argon_time = 1;
-    opts.argon_mem_kb = 8192;
-    opts.argon_threads = 1;
+  SecureString cover_pass("coverpass", 9);
+  SecureString hidden_pass("hiddenpass", 10);
+  DeniableContainerOptions opts;
+  opts.slot_size_bytes = 1024 * 1024; // 1 MB
+  opts.argon_time = 1;
+  opts.argon_mem_kb = 8192;
+  opts.argon_threads = 1;
 
-    create_deniable_container(cover_path, &hidden_path, container_path, cover_pass, &hidden_pass, opts);
+  create_deniable_container(cover_path, &hidden_path, container_path,
+                            cover_pass, &hidden_pass, opts);
 
-    // Opening with cover_pass yields cover payload
-    open_deniable_container(container_path, out_cover, cover_pass, opts);
-    TEST_ASSERT(read_file(out_cover) == "Public innocuous document", "Cover decrypted correctly");
+  // Opening with cover_pass yields cover payload
+  open_deniable_container(container_path, out_cover, cover_pass, opts);
+  TEST_ASSERT(read_file(out_cover) == "Public innocuous document",
+              "Cover decrypted correctly");
 
-    // Opening with hidden_pass yields hidden payload
-    open_deniable_container(container_path, out_hidden, hidden_pass, opts);
-    TEST_ASSERT(read_file(out_hidden) == "Super confidential hidden payload", "Hidden decrypted correctly");
+  // Opening with hidden_pass yields hidden payload
+  open_deniable_container(container_path, out_hidden, hidden_pass, opts);
+  TEST_ASSERT(read_file(out_hidden) == "Super confidential hidden payload",
+              "Hidden decrypted correctly");
 
-    remove_file(cover_path);
-    remove_file(hidden_path);
-    remove_file(container_path);
-    remove_file(out_cover);
-    remove_file(out_hidden);
+  remove_file(cover_path);
+  remove_file(hidden_path);
+  remove_file(container_path);
+  remove_file(out_cover);
+  remove_file(out_hidden);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 int main() {
-    if (sodium_init() < 0) {
-        std::cerr << "libsodium initialization failed\n";
-        return 1;
-    }
+  if (sodium_init() < 0) {
+    std::cerr << "libsodium initialization failed\n";
+    return 1;
+  }
 
-    std::cout << "========================================\n";
-    std::cout << "   MiniCrypto v1.1 Test Suite\n";
-    std::cout << "========================================\n";
+  std::cout << "========================================\n";
+  std::cout << "   MiniCrypto v1.2 Test Suite\n";
+  std::cout << "========================================\n";
 
-    RUN_TEST(test_secure_memory);
-    RUN_TEST(test_header_validation);
-    RUN_TEST(test_standard_encryption_roundtrip);
-    RUN_TEST(test_split_key_mode);
-    RUN_TEST(test_key_only_mode);
-    RUN_TEST(test_headerless_mode);
-    RUN_TEST(test_deterministic_mode);
-    RUN_TEST(test_tamper_detection);
-    RUN_TEST(test_wrong_password);
-    RUN_TEST(test_large_file_streaming);
-    RUN_TEST(test_empty_file);
-    RUN_TEST(test_directory_pack_unpack);
-    RUN_TEST(test_directory_encryption_roundtrip);
-    RUN_TEST(test_path_traversal_prevention);
-    RUN_TEST(test_archive_path_length_limit);
-    RUN_TEST(test_unicode_filesystem_paths);
-    RUN_TEST(test_atomic_file);
-    RUN_TEST(test_deniable_container_cover_only);
-    RUN_TEST(test_deniable_container_cover_and_hidden);
+  RUN_TEST(test_secure_memory);
+  RUN_TEST(test_header_validation);
+  RUN_TEST(test_standard_encryption_roundtrip);
+  RUN_TEST(test_split_key_mode);
+  RUN_TEST(test_key_only_mode);
+  RUN_TEST(test_headerless_mode);
+  RUN_TEST(test_deterministic_mode);
+  RUN_TEST(test_tamper_detection);
+  RUN_TEST(test_wrong_password);
+  RUN_TEST(test_large_file_streaming);
+  RUN_TEST(test_empty_file);
+  RUN_TEST(test_directory_pack_unpack);
+  RUN_TEST(test_directory_encryption_roundtrip);
+  RUN_TEST(test_path_traversal_prevention);
+  RUN_TEST(test_archive_path_length_limit);
+  RUN_TEST(test_unicode_filesystem_paths);
+  RUN_TEST(test_atomic_file);
+  RUN_TEST(test_deniable_container_cover_only);
+  RUN_TEST(test_deniable_container_cover_and_hidden);
 
-    std::cout << "========================================\n";
-    std::cout << "Results: " << g_tests_passed << " passed, "
-              << g_tests_failed << " failed.\n";
-    std::cout << "========================================\n";
+  std::cout << "========================================\n";
+  std::cout << "Results: " << g_tests_passed << " passed, " << g_tests_failed
+            << " failed.\n";
+  std::cout << "========================================\n";
 
-    return (g_tests_failed == 0) ? 0 : 1;
+  return (g_tests_failed == 0) ? 0 : 1;
 }

@@ -1,4 +1,4 @@
-# MiniCrypto v1.1
+# MiniCrypto v1.2
 
 [![Cross-Platform CI](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml/badge.svg)](https://github.com/cppNexus/MiniCrypto/actions/workflows/ci.yml)
 
